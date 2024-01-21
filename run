@@ -1,0 +1,14 @@
+#!/bin/bash
+
+repo="$1"
+tag="$2"
+cmd="$3"
+folder="$HOME/.docker-internals"
+path="$folder/$repo/$tag"
+script_path=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+if [ ! -d "$path" ];then
+    eval "$script_path/download-image $repo $tag"    
+fi
+
+sudo chroot "$path" "$cmd"

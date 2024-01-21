@@ -1,10 +1,12 @@
 #!/bin/bash
+
 platform="amd64"
 api="application/vnd.docker.distribution.manifest.v2+json"
 apil="application/vnd.docker.distribution.manifest.list.v2+json"
 apii="application/vnd.oci.image.manifest.v1+json"
 repo="$1"
 tag="$2"
+folder="$HOME/.docker-internals"
 
 url_auth="https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull"
 
@@ -23,10 +25,12 @@ digest=$(echo $resp | jq -r ".manifests | .[] | select(.platform.architecture ==
 url_mani="https://registry-1.docker.io/v2/${repo}/manifests/${digest}"
 resp=$(curl -H "Accept: ${apii}" -H "Authorization: Bearer ${token}" -s "$url_mani")
 
-mkdir -p "$repo/$tag"
+path="$folder/$repo/$tag"
+mkdir -p "$path"
 
+echo "Downloading to: $path"
 echo $resp | jq -r '.layers[] | .digest' | while read l; do
     echo "Downloading layer: ${l#sha256:}"
     url_blob="https://registry-1.docker.io/v2/${repo}/blobs/${l}"
-    curl -L -H "Accept: ${apii}" -H "Authorization: Bearer ${token}" -s "$url_blob" | tar xz -C "$repo/$tag"
+    curl -L -H "Accept: ${apii}" -H "Authorization: Bearer ${token}" -s "$url_blob" | tar xz -C "$path"
 done;
