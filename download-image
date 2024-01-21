@@ -1,0 +1,32 @@
+#!/bin/bash
+platform="amd64"
+api="application/vnd.docker.distribution.manifest.v2+json"
+apil="application/vnd.docker.distribution.manifest.list.v2+json"
+apii="application/vnd.oci.image.manifest.v1+json"
+repo="$1"
+tag="$2"
+
+url_auth="https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull"
+
+token=$(curl -s "$url_auth" | jq -r '.token')
+
+url_mani="https://registry-1.docker.io/v2/${repo}/manifests/${tag}"
+resp=$(curl -H "Accept: ${apil}" -H "Authorization: Bearer ${token}" -s "$url_mani")
+
+if ! echo $resp | jq -e 'has("manifests")' > /dev/null; then
+    echo "Image has old manifest format. Exiting."
+    exit 1;
+fi
+
+digest=$(echo $resp | jq -r ".manifests | .[] | select(.platform.architecture == \"${platform}\" and .platform.os == \"linux\") | .digest")
+
+url_mani="https://registry-1.docker.io/v2/${repo}/manifests/${digest}"
+resp=$(curl -H "Accept: ${apii}" -H "Authorization: Bearer ${token}" -s "$url_mani")
+
+mkdir -p "$repo/$tag"
+
+echo $resp | jq -r '.layers[] | .digest' | while read l; do
+    echo "Downloading layer: ${l#sha256:}"
+    url_blob="https://registry-1.docker.io/v2/${repo}/blobs/${l}"
+    curl -L -H "Accept: ${apii}" -H "Authorization: Bearer ${token}" -s "$url_blob" | tar xz -C "$repo/$tag"
+done;
