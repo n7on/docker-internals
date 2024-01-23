@@ -1,12 +1,30 @@
 #!/bin/bash
 
 platform="amd64"
+os="linux"
 api="application/vnd.docker.distribution.manifest.v2+json"
 apil="application/vnd.docker.distribution.manifest.list.v2+json"
 apii="application/vnd.oci.image.manifest.v1+json"
 repo="$1"
 tag="$2"
 folder="$HOME/.docker-internals"
+
+
+function help(){
+    echo "download-image <repo>/<image> <tag>"
+    echo "Ex: download-image library/nginx latest"
+    exit 0
+}
+
+if ! command -v jq &> /dev/null; then
+    echo "jq is not installed. Exiting."
+    exit 1
+fi
+
+if [ -z "$repo" ] || [ -z "$tag" ]; then 
+    help
+fi
+
 
 url_auth="https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull"
 
@@ -20,7 +38,7 @@ if ! echo $resp | jq -e 'has("manifests")' > /dev/null; then
     exit 1;
 fi
 
-digest=$(echo $resp | jq -r ".manifests | .[] | select(.platform.architecture == \"${platform}\" and .platform.os == \"linux\") | .digest")
+digest=$(echo $resp | jq -r ".manifests | .[] | select(.platform.architecture == \"${platform}\" and .platform.os == \"${os}\") | .digest")
 
 url_mani="https://registry-1.docker.io/v2/${repo}/manifests/${digest}"
 resp=$(curl -H "Accept: ${apii}" -H "Authorization: Bearer ${token}" -s "$url_mani")

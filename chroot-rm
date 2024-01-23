@@ -1,0 +1,26 @@
+#!/bin/bash
+
+repo="$1"
+tag="$2"
+folder="$HOME/.docker-internals"
+path="$folder/$repo/$tag"
+script_path=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+function help(){
+    echo "chroot-rm <repo>/<image>"
+    echo "Ex: chroot-rm library/nginx"
+    exit 0
+}
+
+
+if [ -z "$repo" ] || [ -z "$tag" ]; then 
+    help
+fi
+
+if [ ! -d "$path" ]; then
+    echo "$repo:$tag not downloaded. Exiting."
+    exit 1
+fi
+
+
+sudo rm -rf $path
