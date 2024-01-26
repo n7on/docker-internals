@@ -1,37 +1,53 @@
 #!/bin/bash
+set -eo pipefail
 
 platform="amd64"
 os="linux"
-api="application/vnd.docker.distribution.manifest.v2+json"
-apil="application/vnd.docker.distribution.manifest.list.v2+json"
-apii="application/vnd.oci.image.manifest.v1+json"
-repo="$1"
-tag="$2"
+repo=${1%*:*}
+tag=${1#*:*}
 folder="$HOME/.docker-internals"
-
+path="$folder/$repo/$tag"
 
 function help(){
-    echo "download-image <repo>/<image> <tag>"
-    echo "Ex: download-image library/nginx latest"
+    echo "Usage: $(basename $0) <repo>/<image>:<tag>"
     exit 0
 }
+[[ $1 =~ ^[a-z_-]+/[a-z_-]+:[a-z_-]+$ ]] || help
 
 if ! command -v jq &> /dev/null; then
     echo "jq is not installed. Exiting."
     exit 1
 fi
 
-if [ -z "$repo" ] || [ -z "$tag" ]; then 
-    help
-fi
+[ ! -d "$path" ] || echo "Image already downloaded in $path"; exit 1
 
 
-url_auth="https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull"
+function get_token(){
+    local url="https://auth.docker.io/token?service=registry.docker.io&scope=repository:$1:pull"
 
-token=$(curl -s "$url_auth" | jq -r '.token')
+    curl -s "$url" | jq -r '.token'
+} 
 
-url_mani="https://registry-1.docker.io/v2/${repo}/manifests/${tag}"
-resp=$(curl -H "Accept: ${apil}" -H "Authorization: Bearer ${token}" -s "$url_mani")
+function get_manifest(){
+    local api="application/vnd.docker.distribution.manifest.v2+json"
+    local apil="application/vnd.docker.distribution.manifest.list.v2+json"
+    local apii="application/vnd.oci.image.manifest.v1+json"
+    local url="https://registry-1.docker.io/v2/$1/manifests/$2"
+    
+    curl -H "Accept: ${apil}" -H "Accept: ${api}" -H "Accept: ${apii}" -H "Authorization: Bearer $3" -s "$url"
+}
+
+function get_layer(){
+    local api="application/vnd.oci.image.manifest.v1+json"
+    local url="https://registry-1.docker.io/v2/$1/blobs/$2"
+
+    echo "Downloading layer: ${2#sha256:}"
+    curl -L -H "Accept: ${api}" -H "Authorization: Bearer $3" -s "$url" | tar xz -C "$4"
+}
+
+token=$(get_token $repo)
+
+resp=$(get_manifest $repo $tag $token)
 
 if ! echo $resp | jq -e 'has("manifests")' > /dev/null; then
     echo "Image has old manifest format. Exiting."
@@ -40,15 +56,8 @@ fi
 
 digest=$(echo $resp | jq -r ".manifests | .[] | select(.platform.architecture == \"${platform}\" and .platform.os == \"${os}\") | .digest")
 
-url_mani="https://registry-1.docker.io/v2/${repo}/manifests/${digest}"
-resp=$(curl -H "Accept: ${apii}" -H "Authorization: Bearer ${token}" -s "$url_mani")
-
-path="$folder/$repo/$tag"
-mkdir -p "$path"
-
 echo "Downloading to: $path"
-echo $resp | jq -r '.layers[] | .digest' | while read l; do
-    echo "Downloading layer: ${l#sha256:}"
-    url_blob="https://registry-1.docker.io/v2/${repo}/blobs/${l}"
-    curl -L -H "Accept: ${apii}" -H "Authorization: Bearer ${token}" -s "$url_blob" | tar xz -C "$path"
+mkdir -p "$path"
+get_manifest $repo $digest $token | jq -r '.layers[] | .digest' | while read l; do
+    get_layer $repo $l $token $path
 done;
