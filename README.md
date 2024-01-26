@@ -7,7 +7,7 @@ Docker is a way to isolate a process. Various kernel features are used in order 
 The filesystem is isolated in a similar way as with chroot, but Docker uses namespaces instead. Filesystems are called images and they contains the executables needed together with all it's dependencies (user-land). When an executable in this filesystem runs it is called a Container. It's a normal process but it's heavily isolated from the rest of the system, but it still uses the same Kernel (kernel-land). A container usually runs some kind of service, like a webserver. And when attaching to a Container, basically what happens is that a new process (usually a shell) are executed in the same isolated environment, and the terminal is attached to this shell.
 
 # Images
-Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. Docker does this automatically, but we could do this manually as well. 
+Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. Docker does this automatically, but we could do this without Docker as well. 
 
 Ex. Download alpine:latest to ~/.docker-internals/ 
 
@@ -18,8 +18,8 @@ Ex. Download alpine:latest to ~/.docker-internals/
 
 ```
 
-## Running
-An image (filesystem) can obviously be used by a container in Docker. But it can also be used in other ways, like with chroot or WSL2. So we could download the image and extract it to some local folder and chroot into that. 
+## Run
+An image (filesystem) can obviously be used by a container in Docker. But it can also be used in other ways, like with chroot or WSL2. So we could download the image (without Docker) and extract it to some local folder and chroot into that, simulating "docker run". 
 
 Ex. Use image with chroot.
 
@@ -30,7 +30,7 @@ Ex. Use image with chroot.
 
 ```
 
-We could also download and extract an image, and create a single tarball. This tarball could then be imported into Docker, as an image. This is somehow ridiculous, but serves as giving better understanding.
+We could also download and extract an image without Docker, and create a single tarball. This tarball could then be imported into Docker, as an image. This is somehow ridiculous, but serves us well giving better understanding.
 
 Ex. Use image with docker
 ```bash
@@ -48,7 +48,7 @@ docker run -it --rm alpineimport:latest sh
 ```
 
 ## Create
-Docker Images are usually created with a Dockerfile. But we could actually do this manually by copying what we need to a folder, create a tarball and import it into Docker. Executables in Linux usually have dependencies though, to shared object for example. So we need to copy them as well. So if we would like an Image with only "ls" and "bash", we could do like this:
+Docker Images are usually created with Docker using a Dockerfile. But we could actually do this without Docker by copying what we need to a folder, create a tarball and import it into Docker. Executables in Linux usually have dependencies though, to shared objects for example. So we need to copy them as well. So if we would like an Image with only "ls" and "bash", we could do like this:
 
 ```bash
 # 1. create folders
@@ -98,4 +98,6 @@ docker run -it --rm ourimage:latest bash
 
 # See the resemlance between "docker run" and chroot. It's same concept. 
 ```
+
+This method of creating images is basically how base images are born. 
 
