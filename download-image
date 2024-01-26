@@ -19,8 +19,10 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
-[ ! -d "$path" ] || echo "Image already downloaded in $path"; exit 1
-
+if [ -d "$path" ];then
+    echo "Image already downloaded in $path"
+    exit 1
+fi
 
 function get_token(){
     local url="https://auth.docker.io/token?service=registry.docker.io&scope=repository:$1:pull"
