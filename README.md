@@ -27,7 +27,8 @@ An image (filesystem) can obviously be "associated" with a container (namespace)
 
 ```bash
 
-./namespace library/alpine:latest sh
+# TODO - create this script
+# ./namespace library/alpine:latest sh
 ```
 
 
