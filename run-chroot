@@ -18,7 +18,7 @@ function help(){
 [ -n "$cmd" ] || help
 
 if [ ! -d "$path" ];then
-    eval "$script_path/download-image $repo:$tag"
+    eval "$script_path/image-download $repo:$tag"
     init=true    
 fi
 

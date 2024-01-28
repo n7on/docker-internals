@@ -1,68 +1,129 @@
 # Docker Internals
-Docker is a way to isolate and manage a process. Two main kernel features are used in order to do that:
+Docker is a way to isolate and manage a process. This repo show the basic concepts of Docker without using Docker. Following main kernel features are used by Docker:
 
-* namespaces
-Namespaces are used to isolate the process. So that users, groups, hostname, network, pid's etc only are visible from correct namespace. This is basically the main concept of a Docker Container.
+### namespaces
 
-* cgroups
-Manages resources like memory, disk, CPU and network. So that resource limits can be added to a Container.
+Namespaces are used to isolate the process. So that users, hostname, network, pid's etc only are visible from it's namespace. This is the main concept of Docker Containers. Namespaces have different types, like:
 
-The filesystem is isolated in a similar way as with chroot (change root), but Docker uses namespaces instead. Filesystems are called images and they contains the executables needed together with all it's dependencies (this is user-land). When an executable on this filesystem runs in a namespace, it's called a Container. It's a normal process but it's isolated from the rest of the system (using namespaces), but it still uses the same Kernel (kernel-land). A container usually runs some kind of service, like a webserver. And when attaching to a Container, basically what happens is that a new process (usually a shell) are executed in the same namespace, and the terminal is attached to this shell.
+* user
+* cgroup
+* ipc
+* mnt
+* uts
+* pid
 
-# Images
-Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. Docker does this automatically, but we could do this without Docker by calling Dockers registry API's directly.  
+### cgroups
+
+Control Groups, manages resources like memory, disk, CPU and network. So that resource limits can be added to a container.
+
+### capabilities
+
+Used by Docker to set permissions.
+
+### pivot_root 
+
+Used by Docker to change root filesystem to image filesystem.
+
+
+Filesystems are called images and they contains the executables needed together with all it's dependencies (userland). When an executable on this filesystem runs in a namespace, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features above.
+
+## Images
+Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. 
+
+
+### Download Image
+Images are usually downloaded using "docker pull", but we could do this without Docker by calling Dockers registry API's directly.  
 
 Ex. Download alpine:latest to ~/.docker-internals/ 
 
 ``` bash
 
 # note: in the main Docker registry, all official images are part of the "library" repository.
-./download-image library/alpine:latest
+./image-download library/alpine:latest
+
+```
+### Create Image
+Docker Images are usually created using a Dockerfile and "docker build". But we could do this without Docker by copying what we need to a folder, create a tarball and upload it to Docker repository using Docker repository API's. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example. So we need to add them as well. So if we would like an Image with only "ls" and "bash", we could do like this:
+
+```bash
+# 1. create folders
+path=~/.docker-internals/<docker-hub-username>/<repository>/<tag>/
+mkdir -p $path/{bin,lib}
+
+cd $path
+
+# 2. copy "ls" and "bash"
+cp $(which bash) $(which ls) ./bin
+
+# print shared object dependencies
+ldd ./bin/ls
+
+# 3. copy shared objects to our "lib"
+
+# selinux
+cp /lib/x86_64-linux-gnu/libselinux.so.1 ./lib
+# glibc
+cp /lib/x86_64-linux-gnu/libc.so.6 ./lib
+# pcre
+cp /lib/x86_64-linux-gnu/libpcre2-8.so.0 ./lib
+cp /lib64/ld-linux-x86-64.so.2 ./lib
+# above would need to be in lib64, so we just create that as a link.
+ln -s lib lib64 
+
+# What about linux-vdso.so.1? That is actually a kernel module loaded from memory.
+
+# Now do same thing for "bash". Only 1 extra object to be added
+ldd ./bin/ls
+cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
+
+# 4. Optional: run it in chroot, to test that it works.
+# sudo chroot ./test bash
+
+# 5. upload to Docker repository using Docker repository API's
+# Before following exports is needed:
+# 
+# export DOCKER_USERNAME=<docker-hub-username>
+# export DOCKER_PASSWORD=<docker-hub-password>
+#
+./image-upload <docker-hub-username>/<repository>:<tag>
 
 ```
 
 
-# Use Image
-An image (filesystem) can obviously be "associated" with a container (namespace) in Docker, but we could do this outside Docker as well using "unshare" command to create a namespace. And cgexec to make it use cgroups.
+## Containers
+Container are just namespaces, and the host has access to all namespaces. So the host is also a container!? - Yes! However, we could use this container concept without Docker as well, by doing following:
 
+* create a namespace
+* mount image filesystem
+* change root using pivot_root
+* run an executable
+
+So to run alpine image we could do like this.
 ```bash
 
 # TODO - create this script
-# ./namespace library/alpine:latest sh
+./run library/alpine:latest sh
 ```
 
+## Other uses of Docker Images
+Docker Images can also be used in other ways as well. 
 
-It can also be used in other ways, like with chroot. So we could download the image (without Docker) and extract it to some local folder and chroot into that, simulating "docker run".
+### chroot
+We could download the image (without Docker) and extract it to a local folder and chroot into that. This would only isolate filesystem though, so it's not really a container. 
 
 Ex. Use image with chroot.
 
 ``` bash
 
 # note: in the main Docker registry, all official images are part of the "library" repository.
-./chroot library/alpine:latest sh
+./run-chroot library/alpine:latest sh
 
 ```
 
-We could also download and extract an image without Docker, and create a single tarball. This tarball could then be imported into Docker, as an image. This is somehow ridiculous, but gives us some insight.
+### WSL2
+We could use the image in WSL2, importing the filesystem as a tarball in WSL2 will create a new WSL2 "distribution". 
 
-Ex. Use image with docker
-```bash
-# download
-./download-image library/alpine:latest
-
-# pack
-tar -czvf alpine.tar.gz -C ~/.docker-internals/library/alpine/latest .
-
-# import
-cat alpine.tar.gz | docker import --message "import test" - alpineimport:latest
-
-# run
-docker run -it --rm alpineimport:latest sh
-```
-
-Or we could use the image in WSL2, importing the tarball will create a new WSL2 "distribution". 
-
-WSL2 actually has a lot common with Docker, each distribution runs under same kernel, and the kernel runs in a light-weight Hyper-v VM. So all distributions share host, meaning that a WSL2 distribution and Docker Containers are conceptually same thing. WSL2 distributions is initialized differently though, while Docker Containers basically runs 1 main process, WSL2 runs a normal init (like System V or SystemD) starting up lot's of different processes, behaving more like an distribution.
+WSL2 actually has a lot common with Docker, each distribution runs under same kernel, and the kernel runs in a light-weight Hyper-V VM. So all distributions share host. Meaning that a WSL2 distribution and Docker Containers are conceptually same thing. WSL2 distributions are initialized differently though, while Docker Containers basically runs one main process, WSL2 runs a normal init (like System V or System D) starting up lot's of different processes, behaving more like a Linux distribution.
 
 Ex. Use image with WSL2
 
@@ -79,7 +140,7 @@ And copy tarball to that folder
 # Linux
 
 # download
-./download-image library/alpine:latest
+./image-download library/alpine:latest
 
 # pack
 tar -czvf alpine.tar.gz -C ~/.docker-internals/library/alpine/latest .
@@ -87,66 +148,9 @@ tar -czvf alpine.tar.gz -C ~/.docker-internals/library/alpine/latest .
 # copy
 cp alpine.tar.gz /mnt/c/WSLDistros/
 ```
-
+And import it into WSL2.
 ``` powershell
 # Windows again
 
 wsl.exe --import "alpine" C:\WSLDistros\alpine\ C:\WSLDistros\alpine.tar.gz
 ```
-
-
-
-# Create Image
-Docker Images are usually created with Docker using a Dockerfile. But we could actually do this without Docker by copying what we need to a folder, create a tarball and import it into Docker. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example. So we need to copy them as well. So if we would like an Image with only "ls" and "bash", we could do like this:
-
-```bash
-# 1. create folders
-mkdir -p test/{bin,lib}
-
-# 2. copy "ls" and "bash"
-cp $(which bash) $(which ls) test/bin
-
-# print shared object dependencies
-ldd test/bin/ls
-
-# 3. copy shared objects to our "lib"
-
-# selinux
-cp /lib/x86_64-linux-gnu/libselinux.so.1 test/lib
-# glibc
-cp /lib/x86_64-linux-gnu/libc.so.6 test/lib
-# pcre
-cp /lib/x86_64-linux-gnu/libpcre2-8.so.0 test/lib
-cp /lib64/ld-linux-x86-64.so.2 test/lib
-# above would need to be in lib64, so we just create that as a link.
-cd test # because paths need to be correct
-ln -s lib lib64 
-cd ..
-
-# What about linux-vdso.so.1? That is actually a kernel module loaded from memory.
-
-# Now do same thing for "bash". Only 1 extra object to be added
-ldd test/bin/ls
-cp /lib/x86_64-linux-gnu/libtinfo.so.6 test/lib
-
-# 4. chroot into it, to test it
-sudo chroot ./test bash
-
-# or just run ls in chroot environment
-sudo chroot ./test ls /
-
-# 5. create tarball
-
-tar -czvf ourimage.tar.gz -C ./test .
-
-# import
-cat ourimage.tar.gz | docker import --message "import ourimage" - ourimage:latest
-
-# run
-docker run -it --rm ourimage:latest bash
-
-# See the resemlance between "docker run" and chroot. It's same concept. 
-```
-
-This method of creating images is basically how base images are born. 
-

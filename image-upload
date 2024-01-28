@@ -1,0 +1,97 @@
+#!/bin/bash
+set -eo pipefail
+
+platform="amd64"
+os="linux"
+repo=${1%*:*}
+tag=${1#*:*}
+folder="$HOME/.docker-internals"
+tarball_path="$folder/$repo/$tag.tar.gz"
+config_path="$folder/$repo/$tag.json"
+path="$folder/$repo/$tag"
+
+registry_uri=https://registry-1.docker.io/v2
+
+function help(){
+    echo "Usage: $(basename $0) <repo>/<image>:<tag>"
+    exit 0
+}
+
+[[ $1 =~ ^[a-z0-9_-]+/[a-z0-9_-]+:[a-z0-9_-]+$ ]] || help
+
+if ! command -v jq &> /dev/null; then
+    echo "jq is not installed. Exiting."
+    exit 1
+fi
+
+function get_token(){
+    local url="https://auth.docker.io/token?service=registry.docker.io&scope=repository:$1:push,pull"
+
+    curl -s -u "$DOCKER_USERNAME:$DOCKER_PASSWORD"  "$url" | jq -r '.token'
+}
+
+
+function put_blob(){
+    local url="$registry_uri/$1/blobs/uploads"
+    local size=$(stat -c%s "$3")
+    local digest=sha256:$(sha256sum $3 | cut -d ' ' -f1)
+    # get upload url
+    local location=$(curl  -X POST -si -H "Authorization: Bearer $2" "$url/" | grep location | sed 's/^location: //' | tr -d ' ' | tr -d '\r')
+
+    # upload file
+    curl -X PUT -s -H "Authorization: Bearer $2" -H "Content-Type: application/octet-stream" -H "Content-Length: $size" --data-binary @"$3" "$location&digest=$digest"
+
+    # validate
+    curl -s -H "Authorization: Bearer $2" "$registry_uri/$1/blobs/$digest"
+
+    echo "$digest,$size"
+}
+
+
+function put_image(){
+    local url="$registry_uri/$1/manifests/$3"
+
+    local layer=$(put_blob $1 $2 "$tarball_path")
+    local config=$(put_blob $1 $2 "$config_path")
+
+    local manifest='{
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+    "config": {
+        "mediaType": "application/vnd.docker.container.image.v1+json",
+        "digest": "'$(echo $config | cut -f1 -d,)'"
+    },
+    "layers": [
+        {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "'$(echo $layer | cut -f1 -d,)'",
+            "size": '$(echo $config | cut -f2 -d,)'
+        }
+    ]
+    }'
+
+    curl -X PUT -si -H "Authorization: Bearer $token" -H "Content-Type: application/vnd.docker.distribution.manifest.v2+json" --data "$manifest" "$url"
+}
+
+if [ ! -d "$path" ];then
+    echo "No filesystem found in: $path"
+    exit 1
+fi
+
+if [ -x "$DOCKER_USERNAME" -o -x "$DOCKER_PASSWORD" ];then
+    echo "Following environment variables need to be exported:"
+    echo -e "\texport DOCKER_USERNAME=<ducker-hub-username>"
+    echo -e "\texport DOCKER_PASSWORD=<ducker-hub-password>"
+fi
+
+# Only create config.yaml if not exist
+if [ ! -f $config_path ];then
+    echo -e "{\n\t\"Cmd\": [\"sh\"]\n}" > $config_path 
+fi
+
+# Always create tarball
+tar -czf $tarball_path -C $path .
+
+token=$(get_token $repo)
+
+put_image $repo $token $tag 
