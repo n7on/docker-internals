@@ -37,7 +37,9 @@ Used by Docker to change root filesystem to image filesystem.
 Filesystems are called images and they contains the executables needed together with all it's dependencies (userland). When an executable on this filesystem runs in a namespace, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features above.
 
 ## Images
-Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. Images also have a manifest, which is a json file that holds all layer information and the image configuration. This specification is formalized by [OCI](https://github.com/opencontainers/image-spec). By using [./image-download](./image-download) all layers are flattened, so if you later upload image using [./image-upload](./image-upload), image will only have 1 layer.
+Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. Images also have a manifest, which is a json file that holds all layer information and the image configuration. This specification is formalized by [OCI](https://github.com/opencontainers/image-spec). 
+
+By using [./image-download](./image-download) all layers are flattened, so if you later upload image using [./image-upload](./image-upload), image will only have 1 layer.
 
 
 ### Download Image
@@ -54,6 +56,14 @@ Ex. Download alpine:latest to `~/.docker-internals/`
 
 ### Upload Image
 Images are usually uploaded using `docker push`, but we could do this without Docker by calling Docker registry API's directly using [./image-upload](./image-upload). You probably would want to first use [./image-download](./image-download) to download some other image to work on, and move that to `~/.docker-internals/<docker-hub-username>/`
+
+[./image-upload](./image-upload) expects following environment variables to be exported before running.
+
+```bash
+export DOCKER_USERNAME=<your username>
+export DOCKER_PASSWORD=<your password>
+
+```
 
 Ex. Move Nginx image/filesystem so it can be altered and uploaded to your own Docker Repo.
 ```bash
@@ -120,7 +130,7 @@ cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
 
 
 ## Containers
-In Docker, containerd is used for managing the container lifecycle (start, stop etc). And runc is used as it's Container Runtime. And a Container Runtime is basically how a process is isolated. ASo containers are just normal processes that holds namespaces. And we could run an executable inside an image filesystem that holds a couple of namespaces, without using Docker and instead use [./run](./run, which does following:
+In Docker, containerd is used for managing the container lifecycle (start, stop etc). And runc is used as it's Container Runtime. And a Container Runtime is basically how a process is isolated. So containers are just normal processes that holds namespaces. And we could run an executable inside an image filesystem that holds a couple of namespaces without using Docker and instead use [./run](./run), which does following:
 
 * create namespaces
 * mount image filesystem
