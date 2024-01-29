@@ -3,14 +3,23 @@ Docker is a way to isolate and manage a process. This repo show the basic concep
 
 ### namespaces
 
-Namespaces are used to isolate the process. So that users, hostname, network, pid's etc only are visible from it's namespace. This is the main concept of Docker Containers. Namespaces have different types, like:
+Namespaces are used to isolate the process. So that users, hostname, network, pid's etc only are visible from it's namespaces. This is the main concept of Docker Containers. Namespaces have different types like net, ipc, mnt, uts & pid. And each namespace is held by a process. So, if we for example start Nginx in Docker, we could list it's namespaces: 
 
-* user
-* cgroup
-* ipc
-* mnt
-* uts
-* pid
+```bash
+# start nginx
+docker run -it -d -p 8080:80 nginx 
+
+# list all namespaces used by that process
+ps aux | grep nginx | awk '$5 == "master" {print $1}' | xargs lsns -n -p | awk '{print $2}'
+time
+cgroup
+user
+mnt
+uts
+ipc
+pid
+net
+```
 
 ### cgroups
 
@@ -28,11 +37,11 @@ Used by Docker to change root filesystem to image filesystem.
 Filesystems are called images and they contains the executables needed together with all it's dependencies (userland). When an executable on this filesystem runs in a namespace, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features above.
 
 ## Images
-Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. 
+Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. Images also have a manifest, which is a json file that holds all layer information and the image configuration.
 
 
 ### Download Image
-Images are usually downloaded using "docker pull", but we could do this without Docker by calling Dockers registry API's directly.  
+Images are usually downloaded using "docker pull", but we could do this without Docker by calling Docker registry API's directly.  
 
 Ex. Download alpine:latest to ~/.docker-internals/ 
 
@@ -91,9 +100,12 @@ cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
 
 
 ## Containers
-Container are just namespaces, and the host has access to all namespaces. So the host is also a container!? - Yes! However, we could use this container concept without Docker as well, by doing following:
 
-* create a namespace
+Container are just normal processes that holds namespaces. So we could run an executable inside an image filesystem that holds a couple of namespaces, without using Docker.
+
+[./run](./run) does following:
+
+* create namespaces
 * mount image filesystem
 * change root using pivot_root
 * run an executable
@@ -124,6 +136,10 @@ Ex. Use image with chroot.
 We could use the image in WSL2, importing the filesystem as a tarball in WSL2 will create a new WSL2 "distribution". 
 
 WSL2 actually has a lot common with Docker, each distribution runs under same kernel, and the kernel runs in a light-weight Hyper-V VM. So all distributions share host. Meaning that a WSL2 distribution and Docker Containers are conceptually same thing. WSL2 distributions are initialized differently though, while Docker Containers basically runs one main process, WSL2 runs a normal init (like System V or System D) starting up lot's of different processes, behaving more like a Linux distribution.
+
+Docker Desktop for Windows can be used with WSL2, which will create 2 WSL2 distributions (docker-desktop & docker-desktop-data). The one where Docker Runtime runs is docker-desktop.
+
+We could use any Docker image in WSL2 by doing following:
 
 Ex. Use image with WSL2
 
