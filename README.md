@@ -72,7 +72,7 @@ mv ~/.docker-internals/library/nginx ~/.docker-internals/<docker-hub-username>/n
 
 ```
 
-Ex. Upload ~/.docker-internals/<docker-hub-username>/alpine/latest to <docker-hub-username>/alpine:latest  
+Ex. Upload `~/.docker-internals/<docker-hub-username>/alpine/latest` to `<docker-hub-username>/alpine:latest`  
 ``` bash
 
 # note: in the main Docker registry, all official images are part of the "library" repository.
