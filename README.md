@@ -37,11 +37,11 @@ Used by Docker to change root filesystem to image filesystem.
 Filesystems are called images and they contains the executables needed together with all it's dependencies (userland). When an executable on this filesystem runs in a namespace, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features above.
 
 ## Images
-Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. Images also have a manifest, which is a json file that holds all layer information and the image configuration.
+Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. Images also have a manifest, which is a json file that holds all layer information and the image configuration. This specification is formalized by [OCI](https://github.com/opencontainers/image-spec).
 
 
 ### Download Image
-Images are usually downloaded using "docker pull", but we could do this without Docker by calling Docker registry API's directly.  
+Images are usually downloaded using "docker pull", but we could do this without Docker by calling Docker registry API's directly using [./image-download](./image-download). Images are downloaded and filesystem extracted to ~/.docker-internals/<docker-hub-username>/<repository>/<tag>. And Official images all have docker-hub-username=library.
 
 Ex. Download alpine:latest to ~/.docker-internals/ 
 
@@ -51,8 +51,28 @@ Ex. Download alpine:latest to ~/.docker-internals/
 ./image-download library/alpine:latest
 
 ```
+
+### Upload Image
+Images are usually uploaded using "docker push", but we could do this without Docker by calling Docker registry API's directly using [./image-upload](./image-upload). You probably would want to first use [./image-download](./image-download) to download some other image to work on, and move that to your <docker-hub-username> filesystem location.
+
+Ex. Move Nginx image/filesystem so it can be altered and uploaded to your own Docker Repo.
+```bash
+mkdir -p ~/.docker-internals/<docker-hub-username>
+mv ~/.docker-internals/library/nginx ~/.docker-internals/<docker-hub-username>/nginx
+
+```
+
+Ex. Upload ~/.docker-internals/<docker-hub-username>/alpine/latest to <docker-hub-username>/alpine:latest  
+``` bash
+
+# note: in the main Docker registry, all official images are part of the "library" repository.
+./image-upload <docker-hub-username>/alpine:latest
+
+```
+
+
 ### Create Image
-Docker Images are usually created using a Dockerfile and "docker build". But we could do this without Docker by copying what we need to a folder, create a tarball and upload it to Docker repository using Docker repository API's. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example. So we need to add them as well. So if we would like an Image with only "ls" and "bash", we could do like this:
+Docker Images are usually created using a Dockerfile and "docker build". But we could do this without Docker by copying what we need to a folder, create a tarball and upload it to Docker repository using Docker repository API's (see [./image-upload](./image-upload). Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example. So we need to add them as well. So if we would like an Image with only "ls" and "bash", we could do following to upload it to our own Docker Repo, as a base-image:
 
 ```bash
 # 1. create folders
@@ -101,9 +121,7 @@ cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
 
 ## Containers
 
-Container are just normal processes that holds namespaces. So we could run an executable inside an image filesystem that holds a couple of namespaces, without using Docker.
-
-[./run](./run) does following:
+Container are just normal processes that holds namespaces. So we could run an executable inside an image filesystem that holds a couple of namespaces, without using Docker and instead use [./run](./run, which does following:
 
 * create namespaces
 * mount image filesystem
@@ -118,10 +136,10 @@ So to run alpine image we could do like this.
 ```
 
 ## Other uses of Docker Images
-Docker Images can also be used in other ways as well. 
+Docker Image filesystems can also be used in other ways. Once we [Download Image](#download-image) we can use it for other purposes as well. 
 
 ### chroot
-We could download the image (without Docker) and extract it to a local folder and chroot into that. This would only isolate filesystem though, so it's not really a container. 
+We could download the image without Docker (using [./image-download](./image-download)) and chroot into the extracted filesystem. This would only isolate filesystem though, so it doesn't qualify as a container. It's convenient though, for testing and exploring an image.
 
 Ex. Use image with chroot.
 
