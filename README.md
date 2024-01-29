@@ -43,19 +43,19 @@ By using [./image-download](./image-download) all layers are flattened, so if yo
 
 
 ### Download Image
-Images are usually downloaded using `docker pull`, but we could do this without Docker by calling Docker registry API's directly using [./image-download](./image-download). Images are downloaded and filesystem extracted to `~/.docker-internals/<docker-hub-username>/<repository>/<tag>`. Note that Official images all have `docker-hub-username = "library"`.
+Images are usually downloaded using `docker pull`, but we could do this without Docker by calling Docker Registry API's directly using [./image-download](./image-download). Images are downloaded and filesystem extracted to `~/.docker-internals/<docker-hub-username>/<repository>/<tag>`. Note that Official images all have `docker-hub-username = "library"`.
 
 Ex. Download alpine:latest to `~/.docker-internals/` 
 
 ``` bash
 
-# note: in the main Docker registry, all official images are part of the "library" repository.
+# note: in the main Docker Registry, all official images are part of the "library" "user".
 ./image-download library/alpine:latest
 
 ```
 
 ### Upload Image
-Images are usually uploaded using `docker push`, but we could do this without Docker by calling Docker registry API's directly using [./image-upload](./image-upload). You probably would want to first use [./image-download](./image-download) to download some other image to work on, and move that to `~/.docker-internals/<docker-hub-username>/`
+Images are usually uploaded using `docker push`, but we could do this without Docker by calling Docker Registry API's directly using [./image-upload](./image-upload). You probably would want to first use [./image-download](./image-download) to download some other image to work on, and move that to `~/.docker-internals/<docker-hub-username>/`
 
 [./image-upload](./image-upload) expects following environment variables to be exported before running.
 
@@ -82,7 +82,7 @@ Ex. Upload `~/.docker-internals/<docker-hub-username>/alpine/latest` to `<docker
 
 
 ### Create Image
-Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to a folder, create a tarball and upload it to Docker repository using Docker repository API's, see [./image-upload](./image-upload) on how to do that. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example. So we need to add them as well. So if we would like an Image with only "ls" and "bash", we could do following to upload it to our own Docker Repo, as a base-image:
+Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to a folder, create a tarball and upload it to Docker Registry using it's API's, see [./image-upload](./image-upload) on how to do that. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example. So we need to add them as well. So if we would like an Image with only "ls" and "bash", we could do following to upload it to our own Docker Repo, as a base-image:
 
 ```bash
 # 1. create folders
@@ -118,7 +118,7 @@ cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
 # 4. Optional: run it in chroot, to test that it works.
 # sudo chroot ./test bash
 
-# 5. upload to Docker repository using Docker repository API's
+# 5. upload to Docker Registry using it's API's
 # Before following exports is needed:
 # 
 # export DOCKER_USERNAME=<docker-hub-username>
@@ -154,7 +154,7 @@ Ex. Use image with chroot.
 
 ``` bash
 
-# note: in the main Docker registry, all official images are part of the "library" repository.
+# note: in the main Docker Registry, all official images are part of the "library" "user".
 ./run-chroot library/alpine:latest sh
 
 ```
