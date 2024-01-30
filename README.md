@@ -1,25 +1,28 @@
 # Docker Internals
-Docker is a way to isolate and manage a process. This repo show the basic concepts of Docker without using Docker. Following main kernel features are used by Docker:
+Docker is a way to isolate and manage a process. This is a basic introduction to the concepts of Docker without using Docker. 
 
+Following main kernel features are used by Docker:
 ### namespaces
 
-Namespaces are used to isolate the process. So that users, hostname, network, pid's etc only are visible from it's namespaces. This is the main concept of Docker Containers. Namespaces have different types like net, ipc, mnt, uts & pid. And each namespace is held by a process. So, if we for example start Nginx in Docker, we could list it's namespaces: 
+Namespaces are used to isolate processes. So that users, hostname, network, pid's etc only are visible from it's namespaces. This is the main concept of Docker Containers. Namespaces have 8 different types like net, mnt, uts, pid etc. And each namespace is held by at least 1 process. And a process can only belong to one namespace for each type at a given time. So, if we for example start Nginx in Docker, we could list it's namespaces: 
 
 ```bash
 # start nginx
 docker run -it -d -p 8080:80 nginx 
 
 # list all namespaces used by that process
-ps aux | grep nginx | awk '$5 == "master" {print $1}' | xargs lsns -n -p | awk '{print $2}'
-time
-cgroup
-user
-mnt
-uts
-ipc
-pid
-net
+ps aux | grep nginx | awk '$5 == "master" {print $1}' | xargs lsns -n -p | awk '{print $1, $2}'
+4026531834 time
+4026531835 cgroup
+4026531837 user
+4026532718 mnt
+4026532719 uts
+4026532720 ipc
+4026532721 pid
+4026532722 net
 ```
+
+Namespaces can be created using `unshare` command, and process started in namespae using `nsenter`.
 
 ### cgroups
 
@@ -34,16 +37,22 @@ Used by Docker to set permissions.
 Used by Docker to change root filesystem to image filesystem.
 
 
-Filesystems are called images and they contains the executables needed together with all it's dependencies (userland). When an executable on this filesystem runs in a namespace, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features above.
+## Docker Runtime
+Docker runs a daemon called containerd, which will provide an API that can be used for managing Docker containers. Such as starting, stopping or pulling images. This API is used by the Docker client executable `docker`. Normally the client connects to containerd using the Docker socket FD (file descriptor). When a container is started, an executable path within container is provided from client. And Docker uses `runc` to isolate the process using namespaces, mount `/dev` & `/sys` filesystems and change root of filesystem using `pivot_root`. So for example, `docker run -it nginx bash` will connect to containerd and send command to run `bash` in `nginx:latest` image filesystem. Containerd will use `runc` execute bash, and because of `-it` flags, it will provide the `docker` client with a reverse shell to the `bash` process.
+
+## Filesystem
+Filesystems created from images and contains the executables needed together with all it's dependencies (userland). When an executable on this filesystem runs in namespaces, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features above. The filesystem used by Docker is called `overlay`, and it is like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So same image can be shared by multiple containers. 
+
+The introduction will not dig any further into the filesystem though. Images will be flattened and written to current filesystem to simplify in order to make other concepts more transparent. 
 
 ## Images
-Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. Images also have a manifest, which is a json file that holds all layer information and the image configuration. This specification is formalized by [OCI](https://github.com/opencontainers/image-spec). 
-
-By using [./image-download](./image-download) all layers are flattened, so if you later upload image using [./image-upload](./image-upload), image will only have 1 layer.
+Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. Images also have a manifest, which is a json file that holds all layer information and the image configuration. This information is used by Docker to create the `overlay` filesystem and start up processes in it's namespaces.
 
 
 ### Download Image
-Images are usually downloaded using `docker pull`, but we could do this without Docker by calling Docker Registry API's directly using [./image-download](./image-download). Images are downloaded and filesystem extracted to `~/.docker-internals/<docker-hub-username>/<repository>/<tag>`. Note that Official images all have `docker-hub-username = "library"`.
+Images are usually downloaded using "docker pull", but we could do this without Docker by calling Docker registry API's directly.  
+
+Following script downloads the layers and extracts it to the fileystem in correct order under `~/.docker-internals/<docker-hub-username>/<repo>/<tag>`. Making it visible and usable in order to explore it further.  
 
 Ex. Download alpine:latest to `~/.docker-internals/` 
 
@@ -82,6 +91,7 @@ Ex. Upload `~/.docker-internals/<docker-hub-username>/alpine/latest` to `<docker
 
 
 ### Create Image
+Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to `/.docker-internals/<docker-hub-username>/<repository>/<tag>/` path and run [./image-upload](./image-upload), which creates a tarball and upload it to Docker repository using it's API's. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example, so we need to add them as well. Given that we would like an Image with only `ls` and `bash`, we could do like following:
 Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to a folder, create a tarball and upload it to Docker Registry using it's API's, see [./image-upload](./image-upload) on how to do that. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example. So we need to add them as well. So if we would like an Image with only "ls" and "bash", we could do following to upload it to our own Docker Repo, as a base-image:
 
 ```bash
@@ -162,18 +172,17 @@ Ex. Use image with chroot.
 ### WSL2
 We could use the image in WSL2, importing the filesystem as a tarball in WSL2 will create a new WSL2 "distribution". 
 
-WSL2 actually has a lot common with Docker, each distribution runs under same kernel, and the kernel runs in a light-weight Hyper-V VM. So all distributions share host. Meaning that a WSL2 distribution and Docker Containers are conceptually same thing. WSL2 distributions are initialized differently though, while Docker Containers basically runs one main process, WSL2 runs a normal init (like SystemV or SystemD) starting up lot's of different processes, behaving more like a Linux distribution.
+> WSL2 actually has a lot common with Docker, each distribution runs under same kernel, and the kernel runs in a light-weight Hyper-V VM. So all distributions share host. Meaning that a WSL2 distribution and Docker Containers are conceptually same thing. But WSL2 distributions use ext4 filesystem and are initialized differently though. While Docker Containers basically runs one main process, WSL2 runs a normal init like System V or SystemD. And thus behave more like a normal Linux distribution.
 
-Docker Desktop for Windows can be used with WSL2, which will create 2 WSL2 distributions (docker-desktop & docker-desktop-data). Docker Runtime runs in docker-desktop.
+
+Docker Desktop for Windows can be used with WSL2, which will create two distributions called docker-desktop & docker-desktop-data. The one where Docker Runtime runs is docker-desktop.
 
 We could use any Docker image in WSL2 by doing following:
 
 Ex. Use image with WSL2
 
-First create some folders in Windows
-
 ``` powershell
-# Windows
+# First create some folders in Windows
 $Path = c:\WSLDistros\alpine
 New-Item -ItemType Directory -Path $Path
 
