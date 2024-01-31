@@ -38,15 +38,15 @@ Used by Docker to change root filesystem to image filesystem.
 
 
 ## Docker Runtime
-Docker runs a daemon called containerd, which will provide an API that can be used for managing Docker containers. Such as starting, stopping or pulling images. This API is used by the Docker client executable `docker`. Normally the client connects to containerd using the Docker socket FD (file descriptor). When a container is started, an executable path within container is provided from client. And Docker uses `runc` to isolate the process using namespaces, mount `/dev` & `/sys` filesystems and change root of filesystem using `pivot_root`. So for example, `docker run -it nginx bash` will connect to containerd and send command to run `bash` in `nginx:latest` image filesystem. Containerd will use `runc` execute bash, and because of `-it` flags, it will provide the `docker` client with a reverse shell to the `bash` process.
+Docker Engine runs a daemon called containerd, which will provide a service that can be used for managing Docker containers. Such as starting, stopping or pulling images. This service is used by the Docker Client executable `docker`. Normally the client connects to containerd using the Docker UNIX socket file descriptor `/var/run/docker.sock`. When a container is started, an executable path within image is provided from client. And Docker uses a Docker Runtime called `runc` to isolate the process using namespaces, mount `/dev` & `/sys` filesystems, change root of filesystem using `pivot_root` and so forth. For example, `docker run -it nginx bash` will connect to containerd and send command to run `bash` in `nginx:latest` image filesystem. Containerd will use `runc` to execute bash. And because of `-it` flags, it will provide the `docker` client with a reverse shell to the `bash` process.
 
 ## Filesystem
-Filesystems created from images and contains the executables needed together with all it's dependencies (userland). When an executable on this filesystem runs in namespaces, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features above. The filesystem used by Docker is called `overlay`, and it is like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So same image can be shared by multiple containers. 
+Root filesystems are part of an image and contains the executables needed together with all it's dependencies (userland). When an executable on this root filesystem runs in the Docker Runtime, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features listed above. The filesystem used by Docker is called `overlay`, and it's just like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So same image can be shared by multiple containers.  
 
-The introduction will not dig any further into the filesystem though. Images will be flattened and written to current filesystem to simplify in order to make other concepts more transparent. 
+This introduction will not dig any further into the filesystem though. Images will be flattened and written to current filesystem to simplify in order to make other concepts more transparent. 
 
 ## Images
-Docker images are basically a list of "layers". And each layer is a tarball. So if these tarballs are extracted in correct order to disk, you'll get the image filesystem. Images also have a manifest, which is a json file that holds all layer information and the image configuration. This information is used by Docker to create the `overlay` filesystem and start up processes in it's namespaces.
+Docker images are basically a list of "layers" bundled together with it's runtime configuration. Each layer is built upon previous layers, but when using it it appears as flattened. Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem. Images format is based on a manifest, which is a json file that holds all layer information and the image runtime configuration. This information is used by Docker to create the `overlay` filesystem. And the runtime configuration file hold information about what namespaces to use, which executable to run as default, capabilities etc. Which is later used by the Docker Runtime.
 
 
 ### Download Image
@@ -91,8 +91,7 @@ Ex. Upload `~/.docker-internals/<docker-hub-username>/alpine/latest` to `<docker
 
 
 ### Create Image
-Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to `/.docker-internals/<docker-hub-username>/<repository>/<tag>/` path and run [./image-upload](./image-upload), which creates a tarball and upload it to Docker repository using it's API's. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example, so we need to add them as well. Given that we would like an Image with only `ls` and `bash`, we could do like following:
-Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to a folder, create a tarball and upload it to Docker Registry using it's API's, see [./image-upload](./image-upload) on how to do that. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example. So we need to add them as well. So if we would like an Image with only "ls" and "bash", we could do following to upload it to our own Docker Repo, as a base-image:
+Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to `/.docker-internals/<docker-hub-username>/<repository>/<tag>/` path and run [./image-upload](./image-upload), which creates a tarball and upload it to Docker repository using it's API's. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example, so we need to add them as well. Given that we would like an Image with only `ls` and `bash`, we could do like following to upload it to our own Docker Repo, as a base-image:
 
 ```bash
 # 1. create folders
@@ -140,7 +139,7 @@ cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
 
 
 ## Containers
-In Docker, containerd is used for managing the container lifecycle (start, stop etc). And runc is used as it's Container Runtime. And a Container Runtime is basically how a process is isolated. So containers are just normal processes that holds namespaces. And we could run an executable inside an image filesystem that holds a couple of namespaces without using Docker and instead use [./run](./run), which does following:
+Docker containers are created by the [Docker Runtime](#docker-runtime) where containerd is used for managing the container lifecycle (start, stop etc). And `runc` is used as it's container runtime. And a Container Runtime is basically how a process is isolated. So containers are just normal processes that holds namespaces. And we could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use [./run](./run), which does following:
 
 * create namespaces
 * mount image filesystem
