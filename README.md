@@ -52,7 +52,7 @@ Docker images are basically a list of "layers" bundled together with it's runtim
 ### Download Image
 Images are usually downloaded using "docker pull", but we could do this without Docker by calling Docker registry API's directly.  
 
-Following script downloads the layers and extracts it to the fileystem in correct order under `~/.docker-internals/<docker-hub-username>/<repo>/<tag>`. Making it visible and usable in order to explore it further.  
+Following script requests the manifest, downloads the layers and extracts it to the fileystem in correct order under `~/.docker-internals/<docker-hub-username>/<repo>/<tag>`. Making it visible and usable in order to explore it further.  
 
 Ex. Download alpine:latest to `~/.docker-internals/` 
 
@@ -91,7 +91,7 @@ Ex. Upload `~/.docker-internals/<docker-hub-username>/alpine/latest` to `<docker
 
 
 ### Create Image
-Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to `/.docker-internals/<docker-hub-username>/<repository>/<tag>/` path and run [./image-upload](./image-upload), which creates a tarball and upload it to Docker repository using it's API's. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example, so we need to add them as well. Given that we would like an Image with only `ls` and `bash`, we could do like following to upload it to our own Docker Repo, as a base-image:
+Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to `/.docker-internals/<docker-hub-username>/<repository>/<tag>/` path and run [./image-upload](./image-upload). Which upload the manifest, configuration file and a single layer (as a tarball) to Docker repository using it's API's. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example, so we need to add them as well. Given that we would like an Image with only `ls` and `bash`, we could do like following to upload it to our own Docker Repo, as a base-image:
 
 ```bash
 # 1. create folders
@@ -139,14 +139,14 @@ cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
 
 
 ## Containers
-Docker containers are created by the [Docker Runtime](#docker-runtime) where containerd is used for managing the container lifecycle (start, stop etc). And `runc` is used as it's container runtime. And a Container Runtime is basically how a process is isolated. So containers are just normal processes that holds namespaces. And we could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use [./run](./run), which does following:
+Docker containers are created by the [Docker Runtime](#docker-runtime) where containerd is used for managing the container lifecycle (start, stop etc). And `runc` is used as it's container runtime. And a Container Runtime is basically how a process is isolated. So containers are just normal processes that holds namespaces. We could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use [./run](./run), which does following:
 
 * create namespaces
 * mount image filesystem
 * change root using pivot_root
 * run an executable
 
-So to run alpine image we could do like this.
+So to run sh inside alpine image, as a container, we could do like this.
 ```bash
 
 # TODO - create this script
@@ -154,12 +154,12 @@ So to run alpine image we could do like this.
 ```
 
 ## Other uses of Docker Images
-Docker Image filesystems can also be used in other ways. Once we [Download Image](#download-image) we can use it for other purposes as well. 
+Docker Image root filesystems can also be used in other ways. Because when we [Download Image](#download-image) it's separated from Docker and it's image concept, and it could be used for whatever purpose. 
 
 ### chroot
-We could download the image without Docker (using [./image-download](./image-download)) and chroot into the extracted filesystem. This would only isolate filesystem though, so it doesn't qualify as a container. It's convenient though, for testing and exploring an image.
+We could download the image without Docker (using [./image-download](./image-download)) and chroot into the extracted root filesystem. This would only isolate filesystem though, so it doesn't qualify as a container. It's convenient though, for testing and exploring an image.
 
-Ex. Use image with chroot.
+Ex. Use image root filesystem with chroot.
 
 ``` bash
 
@@ -169,9 +169,9 @@ Ex. Use image with chroot.
 ```
 
 ### WSL2
-We could use the image in WSL2, importing the filesystem as a tarball in WSL2 will create a new WSL2 "distribution". 
+We could use the image root filesystem in WSL2, importing the filesystem as a tarball in WSL2 will create a new WSL2 distribution. 
 
-> WSL2 actually has a lot common with Docker, each distribution runs under same kernel, and the kernel runs in a light-weight Hyper-V VM. So all distributions share host. Meaning that a WSL2 distribution and Docker Containers are conceptually same thing. But WSL2 distributions use ext4 filesystem and are initialized differently though. While Docker Containers basically runs one main process, WSL2 runs a normal init like System V or SystemD. And thus behave more like a normal Linux distribution.
+> WSL2 actually has a lot common with Docker, each distribution runs under same kernel, and the kernel runs in a light-weight Hyper-V VM, so all distributions share host (kernel). Meaning that a WSL2 distribution and Docker Containers are conceptually same thing. But WSL2 distributions use ext4 filesystem and are initialized differently. And while Docker Containers basically runs one main process, WSL2 runs a normal init like System V or SystemD. And thus behave more like a normal Linux distribution.
 
 
 Docker Desktop for Windows can be used with WSL2, which will create two distributions called docker-desktop & docker-desktop-data. The one where Docker Runtime runs is docker-desktop.
