@@ -22,7 +22,7 @@ ps aux | grep nginx | awk '$5 == "master" {print $1}' | xargs lsns -n -p | awk '
 4026532722 net
 ```
 
-Namespaces can be created using `unshare` command, and process started in namespae using `nsenter`.
+Namespaces can be created using `unshare` command, and process started in namespaces using `nsenter`.
 
 ### cgroups
 
