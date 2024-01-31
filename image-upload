@@ -12,6 +12,11 @@ path="$folder/$repo/$tag"
 
 registry_uri=https://registry-1.docker.io/v2
 
+function die(){
+    echo "Error: $1" 1>&2
+    exit 1
+}
+
 function help(){
     echo "Usage: $(basename $0) <repo>/<image>:<tag>"
     exit 0
@@ -20,8 +25,7 @@ function help(){
 [[ $1 =~ ^[a-z0-9_-]+/[a-z0-9_-]+:[a-z0-9_-]+$ ]] || help
 
 if ! command -v jq &> /dev/null; then
-    echo "jq is not installed. Exiting."
-    exit 1
+    die "jq is not installed!"
 fi
 
 function get_token(){
@@ -74,14 +78,14 @@ function put_image(){
 }
 
 if [ ! -d "$path" ];then
-    echo "No filesystem found in: $path"
-    exit 1
+    die "No filesystem found in: $path"
 fi
 
 if [ -x "$DOCKER_USERNAME" -o -x "$DOCKER_PASSWORD" ];then
     echo "Following environment variables need to be exported:"
     echo -e "\texport DOCKER_USERNAME=<ducker-hub-username>"
     echo -e "\texport DOCKER_PASSWORD=<ducker-hub-password>"
+    die "No user or password provided!"
 fi
 
 # Only create config.yaml if not exist

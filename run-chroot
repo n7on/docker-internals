@@ -13,7 +13,7 @@ function help(){
     echo "Usage: $(basename $0) <repo>/<image>:<tag> <command>"
     exit 0
 }
-[[ $1 =~ ^[a-z_-]+/[a-z_-]+:[a-z_-]+$ ]] || help
+[[ $1 =~ ^[a-z0-9_-]+/[a-z0-9_-]+:[a-z0-9_-]+$ ]] || help
 
 [ -n "$cmd" ] || help
 
