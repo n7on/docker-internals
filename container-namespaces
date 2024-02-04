@@ -1,0 +1,35 @@
+#!/bin/bash
+set -eo pipefail
+
+repo=${1%*:*}
+tag=${1#*:*}
+cmd="$2"
+images_path="$HOME/.docker-internals/images"
+fs_path="$images_path/$repo/$tag"
+repo_path="$images_path/$repo"
+container_id=$(uuidgen)
+containers_path="$HOME/.docker-internals/containers"
+ns_path="$containers_path/$container_id/namespaces"
+script_path=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+function die(){
+    echo "Error: $1" 1>&2
+    exit 1
+}
+
+function help(){
+    echo "Usage: $(basename $0) <repo>/<image>:<tag>"
+    exit 0
+}
+[[ $1 =~ ^[a-z0-9_-]+/[a-z0-9_-]+:[a-z0-9_-]+$ ]] || help
+
+[ -n "$cmd" ] || help
+
+if [ ! -d "$fs_path" ];then
+    eval "$script_path/image-download $repo:$tag"
+fi
+
+sudo unshare --root=$fs_path --uts --mount --pid --net --ipc --mount-proc --fork  env -i HOME=/root PS1="$repo\$ " PATH=/bin:/usr/bin:/sbin:/usr/sbin TERM="$TERM" "$cmd" "${@:3}"
+
+
+exit 0

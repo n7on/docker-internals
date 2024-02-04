@@ -5,8 +5,8 @@ platform="amd64"
 os="linux"
 repo=${1%*:*}
 tag=${1#*:*}
-folder="$HOME/.docker-internals"
-path="$folder/$repo/$tag"
+images_path="$HOME/.docker-internals/images"
+fs_path="$images_path/$repo/$tag"
 
 registry_uri=https://registry-1.docker.io/v2
 
@@ -25,8 +25,8 @@ if ! command -v jq &> /dev/null; then
     die "jq is not installed!"
 fi
 
-if [ -d "$path" ];then
-    die "Image already downloaded in $path"
+if [ -d "$fs_path" ];then
+    die "Image already downloaded in $fs_path"
 fi
 
 function get_token(){
@@ -67,8 +67,8 @@ if echo $resp | jq -e 'has("manifests")' > /dev/null; then
     resp=$(get_manifest $repo $digest $token)
 fi
 
-echo "Downloading to: $path"
-mkdir -p "$path"
+echo "Downloading to: $fs_path"
+mkdir -p "$fs_path"
  echo $resp | jq -r '.layers[] | .digest' | while read l; do
-    get_layer $repo $l $token $path
+    get_layer $repo $l $token $fs_path
 done;

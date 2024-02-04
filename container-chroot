@@ -1,0 +1,39 @@
+#!/bin/bash
+set -eo pipefail
+
+repo=${1%:*}
+tag=${1#*:}
+cmd="$2"
+images_path="$HOME/.docker-internals/images"
+fs_path="$images_path/$repo/$tag"
+script_path=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+function help(){
+    echo "Usage: $(basename $0) <repo>/<image>:<tag> <command>"
+    exit 0
+}
+[[ $1 =~ ^[a-z0-9_-]+/[a-z0-9_-]+:[a-z0-9_-]+$ ]] || help
+
+[ -n "$cmd" ] || help
+
+if [ ! -d "$fs_path" ];then
+    eval "$script_path/image-download $repo:$tag"
+fi
+
+
+echo "nameserver 8.8.8.8" > $fs_path/etc/resolv.conf
+
+[ -c "$fs_path/dev/null"  ] || sudo chroot "$fs_path" mknod /dev/null c 1 3
+[ -c "$fs_path/dev/zero"  ] || sudo chroot "$fs_path" mknod /dev/zero c 1 5
+sudo chroot "$fs_path" chmod 666 /dev/null /dev/zero
+sudo chroot "$fs_path" chmod 1777 /tmp
+
+
+sudo chroot --userspec=0:0 "$fs_path" env -i HOME=/root PS1="$repo\$ " PATH=/bin:/usr/bin:/sbin:/usr/sbin TERM="$TERM" "$cmd" "${@:3}"
+
+rm $fs_path/etc/resolv.conf
+
+sudo rm $fs_path/dev/null
+sudo rm $fs_path/dev/zero
+
+exit 0

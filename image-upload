@@ -5,10 +5,10 @@ platform="amd64"
 os="linux"
 repo=${1%*:*}
 tag=${1#*:*}
-folder="$HOME/.docker-internals"
-tarball_path="$folder/$repo/$tag.tar.gz"
-config_path="$folder/$repo/$tag.json"
-path="$folder/$repo/$tag"
+images_path="$HOME/.docker-internals/images"
+tarball_path="$images_path/$repo/$tag.tar.gz"
+config_path="$images_path/$repo/$tag.json"
+fs_path="$images_path/$repo/$tag"
 
 registry_uri=https://registry-1.docker.io/v2
 
@@ -77,14 +77,14 @@ function put_image(){
     curl -X PUT -si -H "Authorization: Bearer $token" -H "Content-Type: application/vnd.docker.distribution.manifest.v2+json" --data "$manifest" "$url"
 }
 
-if [ ! -d "$path" ];then
-    die "No filesystem found in: $path"
+if [ ! -d "$fs_path" ];then
+    die "No filesystem found in: $fs_path"
 fi
 
 if [ -x "$DOCKER_USERNAME" -o -x "$DOCKER_PASSWORD" ];then
     echo "Following environment variables need to be exported:"
-    echo -e "\texport DOCKER_USERNAME=<ducker-hub-username>"
-    echo -e "\texport DOCKER_PASSWORD=<ducker-hub-password>"
+    echo -e "\texport DOCKER_USERNAME=<docker-hub-username>"
+    echo -e "\texport DOCKER_PASSWORD=<docker-hub-password>"
     die "No user or password provided!"
 fi
 
@@ -94,7 +94,7 @@ if [ ! -f $config_path ];then
 fi
 
 # Always create tarball
-tar -czf $tarball_path -C $path .
+tar -czf $tarball_path -C $fs_path .
 
 token=$(get_token $repo)
 

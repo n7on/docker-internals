@@ -1,4 +1,0 @@
-#!/bin/bash
-set -eo pipefail
-
-unshare --mount --uts --ipc --net --pid --fork bash
