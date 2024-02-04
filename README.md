@@ -4,11 +4,21 @@ Docker is a way to isolate and manage a process. This is a basic introduction to
 Following main kernel features are used by Docker:
 ### namespaces
 
-Namespaces are used to isolate processes. So that users, hostname, network, pid's etc only are visible from it's namespaces. This is the main concept of Docker Containers. Namespaces have 8 different types like net, mnt, uts, pid etc. And each namespace is held by at least 1 process. And a process can only belong to one namespace for each type at a given time. So, if we for example start Nginx in Docker, we could list it's namespaces: 
+Namespaces are used to isolate processes. So that users, hostname, network, pid's etc only are visible from it's namespaces. This is the main concept of Docker Containers. Namespaces have 8 different types: 
+* `net`. Network interfaces namespace.
+* `mnt`. Mount namespace.
+* `uts`. Hostname namespace.
+* `pid`. Process namespace.
+* `user`. User namespace (doesn't require privileged account).
+* `time`. System time namespace.
+* `ipc`. 
+* `cgroup`. Cgroup namespace.  
+
+And each namespace is held by at least 1 process. And a process can only belong to one namespace for each type at a given time. So, if we for example start Nginx in Docker, we could list it's namespaces using `lsns`: 
 
 ```bash
 # start nginx
-docker run -it -d -p 8080:80 nginx 
+docker run --name nginx -d -p 8080:80 nginx
 
 # list all namespaces used by that process
 ps aux | grep nginx | awk '$5 == "master" {print $1}' | xargs lsns -n -p | awk '{print $1, $2}'
@@ -22,11 +32,36 @@ ps aux | grep nginx | awk '$5 == "master" {print $1}' | xargs lsns -n -p | awk '
 4026532722 net
 ```
 
-Namespaces can be created using `unshare` command, and process started in namespaces using `nsenter`.
+Another way this could be made is by exploring the `/dev` filesystem, which are a dynamically mounted filesystem in Linux. So for each process we have `/dev/<pid>/ns/<namespace>`, and we could get same information as above using:
 
-### cgroups
+```bash
+pid=$(ps aux | grep nginx | awk '$5 == "master" {print $1}')
 
-Control Groups, manages resources like memory, disk, CPU and network. So that resource limits can be added to a container.
+ls -l /proc/$pid/ns
+
+# or for specific namespace, like "mnt"
+readlink /proc/$pid/ns/mnt
+
+```
+> Note that `docker inspect -f '{{.State.Pid}}' nginx` wouldn't give the host namespace pid, but instead container namespace pid. And if using Docker Desktop on Windows with WSL2, containerd is running in the `docker-desktop` WSL2 distribution, so this need to run from there.
+
+Namespaces can be created using `unshare` command, and process started in namespaces using `nsenter`. Which both are basically wrappers around it's `syscalls`.
+
+### cgroup
+
+Control Group, is a way to manage resources like memory, disk, CPU, network etc. So that resource limits can be added to a container, and so that usage can be extracted. Cgroup is structured like multiple separate hierarchies for each of it's subsystems. And these are:
+
+* `blkio`. Limits i/o on block devices.
+* `cpu`. Limits CPU usage.
+* `cpuacct`. Reports usage of CPU
+* `cpuset`. Limits individual CPUs on multicore systems.
+* `devices`. Allows or denies access to devices.
+* `freezer`. Suspend or resumes processes.
+* `memory`. Limits memory usage, and reports usage.
+* `net_cls`. Tags network packages.
+* `net_prio`. Sets priority on network traffic. 
+* `ns`. Limit access to namespaces.
+* `perf_event`. Identify cgroup membership of processes. 
 
 ### capabilities
 
@@ -52,9 +87,9 @@ Docker images are basically a list of "layers" bundled together with it's runtim
 ### Download Image
 Images are usually downloaded using "docker pull", but we could do this without Docker by calling Docker registry API's directly.  
 
-Following script requests the manifest, downloads the layers and extracts it to the fileystem in correct order under `~/.docker-internals/<docker-hub-username>/<repo>/<tag>`. Making it visible and usable in order to explore it further.  
+Following script requests the manifest, downloads the layers and extracts it to the fileystem in correct order under `~/.docker-internals/images/<docker-hub-username>/<repo>/<tag>`. Making it visible and usable in order to explore it further.  
 
-Ex. Download alpine:latest to `~/.docker-internals/` 
+Ex. Download alpine:latest to `~/.docker-internals/images` 
 
 ``` bash
 
@@ -64,7 +99,7 @@ Ex. Download alpine:latest to `~/.docker-internals/`
 ```
 
 ### Upload Image
-Images are usually uploaded using `docker push`, but we could do this without Docker by calling Docker Registry API's directly using [./image-upload](./image-upload). You probably would want to first use [./image-download](./image-download) to download some other image to work on, and move that to `~/.docker-internals/<docker-hub-username>/`
+Images are usually uploaded using `docker push`, but we could do this without Docker by calling Docker Registry API's directly using [./image-upload](./image-upload). You probably would want to first use [./image-download](./image-download) to download some other image to work on, and move that to `~/.docker-internals/images/<docker-hub-username>/`
 
 [./image-upload](./image-upload) expects following environment variables to be exported before running.
 
@@ -76,12 +111,12 @@ export DOCKER_PASSWORD=<your password>
 
 Ex. Move Nginx image/filesystem so it can be altered and uploaded to your own Docker Repo.
 ```bash
-mkdir -p ~/.docker-internals/<docker-hub-username>
-mv ~/.docker-internals/library/nginx ~/.docker-internals/<docker-hub-username>/nginx
+mkdir -p ~/.docker-internals/images/<docker-hub-username>
+mv ~/.docker-internals/images/library/nginx ~/.docker-internals/images/<docker-hub-username>/nginx
 
 ```
 
-Ex. Upload `~/.docker-internals/<docker-hub-username>/alpine/latest` to `<docker-hub-username>/alpine:latest`  
+Ex. Upload `~/.docker-internals/images/<docker-hub-username>/alpine/latest` to `<docker-hub-username>/alpine:latest`  
 ``` bash
 
 # note: in the main Docker registry, all official images are part of the "library" repository.
@@ -91,11 +126,11 @@ Ex. Upload `~/.docker-internals/<docker-hub-username>/alpine/latest` to `<docker
 
 
 ### Create Image
-Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to `/.docker-internals/<docker-hub-username>/<repository>/<tag>/` path and run [./image-upload](./image-upload). Which upload the manifest, configuration file and a single layer (as a tarball) to Docker repository using it's API's. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example, so we need to add them as well. Given that we would like an Image with only `ls` and `bash`, we could do like following to upload it to our own Docker Repo, as a base-image:
+Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to `/.docker-internals/images/<docker-hub-username>/<repository>/<tag>/` path and run [./image-upload](./image-upload). Which upload the manifest, configuration file and a single layer (as a tarball) to Docker repository using it's API's. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example, so we need to add them as well. Given that we would like an Image with only `ls` and `bash`, we could do like following to upload it to our own Docker Repo, as a base-image:
 
 ```bash
 # 1. create folders
-path=~/.docker-internals/<docker-hub-username>/<repository>/<tag>/
+path=~/.docker-internals/images/<docker-hub-username>/<repository>/<tag>/
 mkdir -p $path/{bin,lib}
 
 cd $path
