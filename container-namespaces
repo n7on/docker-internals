@@ -29,6 +29,7 @@ if [ ! -d "$fs_path" ];then
     eval "$script_path/image-download $repo:$tag"
 fi
 
+
 sudo unshare --root=$fs_path --uts --mount --pid --net --ipc --mount-proc --fork  env -i HOME=/root PS1="$repo\$ " PATH=/bin:/usr/bin:/sbin:/usr/sbin TERM="$TERM" "$cmd" "${@:3}"
 
 

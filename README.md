@@ -1,5 +1,5 @@
 # Docker Internals
-Docker is a way to isolate and manage a process. This is a basic introduction to the concepts of Docker without using Docker. 
+Docker is a way to isolate a process, using virtually every possible way in Linux kernel. This is a basic introduction to the concepts of Docker without using Docker. 
 
 Following main kernel features are used by Docker:
 ### namespaces
@@ -11,7 +11,7 @@ Namespaces are used to isolate processes. So that users, hostname, network, pid'
 * `pid`. Process namespace.
 * `user`. User namespace (doesn't require privileged account).
 * `time`. System time namespace.
-* `ipc`. 
+* `ipc`. Inter-Process Communication namespace. Like shared memory, message queues and semaphores.
 * `cgroup`. Cgroup namespace.  
 
 And each namespace is held by at least 1 process. And a process can only belong to one namespace for each type at a given time. So, if we for example start Nginx in Docker, we could list it's namespaces using `lsns`: 
@@ -49,7 +49,7 @@ Namespaces can be created using `unshare` command, and process started in namesp
 
 ### cgroup
 
-Control Group, is a way to manage resources like memory, disk, CPU, network etc. So that resource limits can be added to a container, and so that usage can be extracted. Cgroup is structured like multiple separate hierarchies for each of it's subsystems. And these are:
+Control Group, is a way to manage resources like memory, disk, CPU, network etc. So that resource limits can be added to a container, and so that usage can be extracted. Cgroup is structured like multiple separate hierarchies under `/sys/fs/cgroup` for each of it's subsystems, all isolated from host using it's cgroup namespace. These subsytems (also called resource controllers) are following (others exist as well):
 
 * `blkio`. Limits i/o on block devices.
 * `cpu`. Limits CPU usage.
@@ -61,7 +61,19 @@ Control Group, is a way to manage resources like memory, disk, CPU, network etc.
 * `net_cls`. Tags network packages.
 * `net_prio`. Sets priority on network traffic. 
 * `ns`. Limit access to namespaces.
-* `perf_event`. Identify cgroup membership of processes. 
+* `perf_event`. Identify cgroup membership of processes.
+* `pids`
+* `rdma`
+* `misc`
+
+We could list all the cgroups that can be managed using `lscgroup`, which corresponds to the directories inside `/sys/fs/cgroup`. When a Docker container is started, Docker Runtime will create a new child group named `docker/<container id>` under each subsystem, in it's cgroup namespace. And those could be visualized as following:
+
+```bash
+# create docker container with 
+docker run --name nginx -d -p 8080:80 nginx
+
+
+```
 
 ### capabilities
 
@@ -73,10 +85,10 @@ Used by Docker to change root filesystem to image filesystem.
 
 
 ## Docker Runtime
-Docker Engine runs a daemon called containerd, which will provide a service that can be used for managing Docker containers. Such as starting, stopping or pulling images. This service is used by the Docker Client executable `docker`. Normally the client connects to containerd using the Docker UNIX socket file descriptor `/var/run/docker.sock`. When a container is started, an executable path within image is provided from client. And Docker uses a Docker Runtime called `runc` to isolate the process using namespaces, mount `/dev` & `/sys` filesystems, change root of filesystem using `pivot_root` and so forth. For example, `docker run -it nginx bash` will connect to containerd and send command to run `bash` in `nginx:latest` image filesystem. Containerd will use `runc` to execute bash. And because of `-it` flags, it will provide the `docker` client with a reverse shell to the `bash` process.
+Docker Engine runs a daemon called containerd, which will provide a service that can be used for managing Docker containers. Such as starting, stopping or pulling images. This service is used by the Docker Client executable `docker`. Normally the client connects to containerd using the Docker UNIX socket file descriptor `/var/run/docker.sock`. When a container is started, an executable path within image is provided from client. And Docker uses a Docker Runtime called `runc` to isolate the process using namespaces, mount `/dev` & `/sys` filesystems, change root of filesystem using `pivot_root` and so forth. For example, `docker run -it nginx bash` will connect to containerd and send command to run `bash` in `nginx:latest` image filesystem. Containerd will use `runc` to execute bash. And because of `-it` flags, a shared `TTY` device will be created in host that has `STDIN`, `STDOUT` & `STDERR` from bash connected to it. And it's `TTY` will be redirected by `containerd` to `docker` client, basically as a reverse shell.
 
 ## Filesystem
-Root filesystems are part of an image and contains the executables needed together with all it's dependencies (userland). When an executable on this root filesystem runs in the Docker Runtime, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features listed above. The filesystem used by Docker is called `overlay`, and it's just like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So same image can be shared by multiple containers.  
+Root filesystems are part of an image and contains the executables needed together with all it's dependencies (userland). When an executable on this root filesystem runs in the Docker Runtime, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features listed above. The filesystem used by Docker is a union filesystem called `overlay`, and it's just like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So same image can be shared by multiple containers.  
 
 This introduction will not dig any further into the filesystem though. Images will be flattened and written to current filesystem to simplify in order to make other concepts more transparent. 
 
@@ -85,9 +97,9 @@ Docker images are basically a list of "layers" bundled together with it's runtim
 
 
 ### Download Image
-Images are usually downloaded using "docker pull", but we could do this without Docker by calling Docker registry API's directly.  
+Images are usually downloaded using `docker pull`, but we could do this without Docker by calling Docker registry API's directly.  
 
-Following script requests the manifest, downloads the layers and extracts it to the fileystem in correct order under `~/.docker-internals/images/<docker-hub-username>/<repo>/<tag>`. Making it visible and usable in order to explore it further.  
+Following script requests Docker registry API's to fetch the manifest, downloads the layers and extracts it to the fileystem in correct order under `~/.docker-internals/images/<docker-hub-username>/<repo>/<tag>`. Making it visible and usable in order to explore it further.  
 
 Ex. Download alpine:latest to `~/.docker-internals/images` 
 
@@ -126,7 +138,7 @@ Ex. Upload `~/.docker-internals/images/<docker-hub-username>/alpine/latest` to `
 
 
 ### Create Image
-Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to `/.docker-internals/images/<docker-hub-username>/<repository>/<tag>/` path and run [./image-upload](./image-upload). Which upload the manifest, configuration file and a single layer (as a tarball) to Docker repository using it's API's. Executables in Linux usually have dependencies though, to shared objects (dynamic libraries) for example, so we need to add them as well. Given that we would like an Image with only `ls` and `bash`, we could do like following to upload it to our own Docker Repo, as a base-image:
+Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to `/.docker-internals/images/<docker-hub-username>/<repository>/<tag>/` path and run [./image-upload](./image-upload). Which upload the manifest, configuration file and a single layer (as a tarball) to Docker repository using it's API's. Executables in Linux usually have dependencies to shared objects (dynamic libraries), so we need to add them as well. With that in mind, we would create an Image with only `ls` and `bash`, and upload it to our own Docker Repo, as a base-image:
 
 ```bash
 # 1. create folders
@@ -174,7 +186,7 @@ cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
 
 
 ## Containers
-Docker containers are created by the [Docker Runtime](#docker-runtime) where `containerd` is used for managing the container lifecycle (start, stop etc). And `runc` is used as it's container runtime. And a Container Runtime is basically how a process is isolated. So containers are just normal processes that holds namespaces. We could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use [./container-namespace](./container-namespace), which does following:
+Docker containers are created by the [Docker Runtime](#docker-runtime) where `containerd` is used for managing the container lifecycle (start, stop etc). And `runc` is used as it's container runtime. A Container Runtime is basically how a process is isolated. So containers are just normal processes that holds namespaces. We could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use [./container-namespace](./container-namespace), which does following:
 
 * Start up process with it's own namespaces (uts, mount, pid, net and ipc)
 * Mount image root filesystem
@@ -182,11 +194,11 @@ Docker containers are created by the [Docker Runtime](#docker-runtime) where `co
 
 When a namespace is created, normally the current namespace is copied. So for example `uts` still has it's hosts hostname. But if it's changed within the namespace, it's isolated from host. Same thing with `mounts`. But because `--mount-proc` and `--root` are given, `/proc` is mounted to new root filesystem and therefore resetting both `pid` and `mounts`. 
 
-The `net` namespace will not have it's host network information copied though, which means it will only have a loopback device per default, making this container not able to connect to Internet. This could be achived by creating a virtual network device at the host, and attach that to the `net` namespace.
+The `net` namespace will not have it's host network information copied though, which means it will only have a loopback device per default, making this container not able to connect to Internet. This could be achived by creating a virtual network device at the host, and share it with the `net` namespace.
 
-This example is not using `pivot_root` but instead uses `unshare` with `--root` switch. The reason for that is because `pivot_root` basically need to be done for each process, i.e. it's not maintained in any namespace. Making it hard to do this automatically in bash. `unshare` & `pivot_root` commands are just thin layers of it's `syscalls`.
+> This example is not using `pivot_root` but instead uses `unshare` with `--root` switch. The reason for that is because `pivot_root`  need to be done for each process (it's not maintained in any namespace). Making this possible in a shell using `pivot_root` executable, but it's not possible for any arbitrary executable unless the `pivot_root` syscall is used.
 
-So to run sh inside alpine image, as a container, we could do like this.
+To run sh inside alpine image, as a container, we could do like this.
 ```bash
 
 ./container-namespaces library/alpine:latest sh
