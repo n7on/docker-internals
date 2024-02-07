@@ -1,8 +1,23 @@
 # Docker Internals
 Docker is a way to isolate processes, using virtually every possible way in Linux kernel, but mainly `namespaces`. This is a basic introduction to the concepts of Docker without using Docker. 
 
+
+* [Namespaces](#namespaces)
+* [Cgroups](#cgroups)
+* [Capabilities](#capabilities)
+* [Docker Runtime](#docker-runtime)
+* [Filesystem](#filesystem)
+* [Images](#images)
+* [Download Image](#download-image)
+* [Upload Image](#upload-image)
+* [Create Image](#create-image)
+* [Containers](#containers)
+* [Other uses of Docker Images](#other-uses-of-docker-images)
+
+
+
 Following main kernel features are used by Docker:
-### namespaces
+### Namespaces
 
 Namespaces are used to isolate processes. So that users, hostname, network, pid's etc only are visible from it's namespaces. This is the main concept of Docker Containers. Namespaces have 8 different types: 
 * `net`. Network interfaces namespace.
@@ -20,14 +35,14 @@ Each namespace is held by at least 1 process. And a process can only belong to o
 # list the init process namespaces
 sudo lsns -p 1
 
-4026531834 time       70   1 root /sbin/init
-4026531835 cgroup     70   1 root /sbin/init
-4026531837 user       70   1 root /sbin/init
-4026531840 net        70   1 root /sbin/init
-4026532266 ipc        70   1 root /sbin/init
-4026532277 mnt        67   1 root /sbin/init
-4026532278 uts        68   1 root /sbin/init
-4026532279 pid        70   1 root /sbin/init
+> 4026531834 time       70   1 root /sbin/init
+> 4026531835 cgroup     70   1 root /sbin/init
+> 4026531837 user       70   1 root /sbin/init
+> 4026531840 net        70   1 root /sbin/init
+> 4026532266 ipc        70   1 root /sbin/init
+> 4026532277 mnt        67   1 root /sbin/init
+> 4026532278 uts        68   1 root /sbin/init
+> 4026532279 pid        70   1 root /sbin/init
 
 ```
 And all other processes will inherit namespaces from it's parent process. So if we do same thing for the current shell process, we get exactly same namespace id's as with `init`: 
@@ -35,14 +50,14 @@ And all other processes will inherit namespaces from it's parent process. So if 
 ```bash
 lsns -p $$ | awk '{print $1,$2}'
 
-4026531834 time
-4026531835 cgroup
-4026531837 user
-4026531840 net
-4026532266 ipc
-4026532277 mnt
-4026532278 uts
-4026532279 pid
+> 4026531834 time
+> 4026531835 cgroup
+> 4026531837 user
+> 4026531840 net
+> 4026532266 ipc
+> 4026532277 mnt
+> 4026532278 uts
+> 4026532279 pid
 ```
 
 We could start a new shell with new `uts` namespace using `unshare` command, which is a command that is a wrapper of the `syscall` with same name. And it's used in order to un-share a process from `default namespaces`. So we could start bash using `unshare` (to un-share from `uts` namespace) and list it's `uts` namespace id:  
@@ -56,33 +71,33 @@ sudo unshare --uts bash
 lsns -p $$
 
 # and these namespaces is same as for init
-4026531834 time       71     1 root /sbin/init
-4026531835 cgroup     71     1 root /sbin/init
-4026531837 user       71     1 root /sbin/init
-4026531840 net        71     1 root /sbin/init
-4026532266 ipc        71     1 root /sbin/init
-4026532277 mnt        68     1 root /sbin/init
-4026532279 pid        71     1 root /sbin/init
+> 4026531834 time       71     1 root /sbin/init
+> 4026531835 cgroup     71     1 root /sbin/init
+> 4026531837 user       71     1 root /sbin/init
+> 4026531840 net        71     1 root /sbin/init
+> 4026532266 ipc        71     1 root /sbin/init
+> 4026532277 mnt        68     1 root /sbin/init
+> 4026532279 pid        71     1 root /sbin/init
 
 # but uts namespace have a new id
-4026536218 uts         2 74238 root bash
+> 4026536218 uts         2 74238 root bash
 ```
 
-Another way a process namespaces could be viewed is by exploring the `/dev` filesystem (which are a dynamically mounted filesystem of type `proc`). For each process we have `/dev/<pid>/ns/<namespace>`, so we could show the namespaces of `init` (PID 1) using filesystem as well.
+Another way a process namespaces could be viewed is by exploring the `/dev` filesystem. Which are a pseudo filesystem provided by the kernel. For each process we have `/dev/<pid>/ns/<namespace>`, so we could list the namespaces of `init` (PID 1) using filesystem as well.
 
 ```bash
 sudo ls -l /proc/1/ns
 
-lrwxrwxrwx 1 root root 0 Feb  4 16:26 cgroup -> 'cgroup:[4026531835]'
-lrwxrwxrwx 1 root root 0 Feb  4 16:26 ipc -> 'ipc:[4026532266]'
-lrwxrwxrwx 1 root root 0 Feb  4 16:26 mnt -> 'mnt:[4026532277]'
-lrwxrwxrwx 1 root root 0 Feb  4 16:26 net -> 'net:[4026531840]'
-lrwxrwxrwx 1 root root 0 Feb  4 16:26 pid -> 'pid:[4026532279]'
-lrwxrwxrwx 1 root root 0 Feb  7 18:56 pid_for_children -> 'pid:[4026532279]'
-lrwxrwxrwx 1 root root 0 Feb  4 16:26 time -> 'time:[4026531834]'
-lrwxrwxrwx 1 root root 0 Feb  7 18:56 time_for_children -> 'time:[4026531834]'
-lrwxrwxrwx 1 root root 0 Feb  4 16:26 user -> 'user:[4026531837]'
-lrwxrwxrwx 1 root root 0 Feb  4 16:26 uts -> 'uts:[4026532278]'
+> lrwxrwxrwx 1 root root 0 Feb  4 16:26 cgroup -> 'cgroup:[4026531835]'
+> lrwxrwxrwx 1 root root 0 Feb  4 16:26 ipc -> 'ipc:[4026532266]'
+> lrwxrwxrwx 1 root root 0 Feb  4 16:26 mnt -> 'mnt:[4026532277]'
+> lrwxrwxrwx 1 root root 0 Feb  4 16:26 net -> 'net:[4026531840]'
+> lrwxrwxrwx 1 root root 0 Feb  4 16:26 pid -> 'pid:[4026532279]'
+> lrwxrwxrwx 1 root root 0 Feb  7 18:56 pid_for_children -> 'pid:[4026532279]'
+> lrwxrwxrwx 1 root root 0 Feb  4 16:26 time -> 'time:[4026531834]'
+> lrwxrwxrwx 1 root root 0 Feb  7 18:56 time_for_children -> 'time:[4026531834]'
+> lrwxrwxrwx 1 root root 0 Feb  4 16:26 user -> 'user:[4026531837]'
+> lrwxrwxrwx 1 root root 0 Feb  4 16:26 uts -> 'uts:[4026532278]'
 
 # or for specific namespace, like "mnt"
 sudo readlink /proc/1/ns/mnt
@@ -90,9 +105,11 @@ sudo readlink /proc/1/ns/mnt
 ```
 
 
-### cgroup
+### Cgroups
 
-Control Group (also called resource controllers), is a way to manage resources like memory, disk, CPU, network etc. So that resource limits can be added to a container, and usage can be extracted. Cgroup is structured like multiple separate hierarchies under `/sys/fs/cgroup`. Which contains each of it's subsystems. And a cgroup could isolated from host using it's cgroup namespace. Following are some of these subsystem:
+Control Group (also called resource controllers), is a way to manage resources like memory, disk, CPU, network etc. So that resource limits can be added to a container, and usage can be extracted. Cgroup is structured like multiple separate hierarchies under `/sys/fs/cgroup`. Which contains each of it's subsystems. And a `cgroup` is isolated from host using it's `cgroup` namespace. When a Docker container is started, Docker Runtime will create a new child group named `docker/<container id>` under each subsystem. The host `cgroup` namespace will be copied, and if a limit is added it will be changed in the namespace. Following are some of these subsystem:
+
+> Note that the `/sys` filesystem is just like `/dev` a pseudo filesystem provided by the kernel.
 
 * `blkio`. Limits i/o on block devices.
 * `cpu`. Limits CPU usage.
@@ -107,23 +124,37 @@ Control Group (also called resource controllers), is a way to manage resources l
 * `perf_event`. Identify cgroup membership of processes.
 
 
-We could list all the cgroups that can be managed using `lscgroup`, which corresponds to the directories inside `/sys/fs/cgroup`. When a Docker container is started, Docker Runtime will create a new child group named `docker/<container id>` under each subsystem in it's cgroup namespace. And we could run a Docker container with some limit, to explore:
+We could list all the cgroups that can be managed using `lscgroup`, which corresponds to the directories inside `/sys/fs/cgroup`.  
+
+We could run a Docker container with some limit to explore:
 
 ```bash
-# run sh in docker container named alpine using alpine image 
+# run sh in docker container named alpine using alpine image, with a 512mb memory limit
 docker run --name alpine -it --rm --memory="512mb" alpine sh
 
 # run docker stats to see it's limit
 docker stats
 
-CONTAINER ID   NAME      CPU %     MEM USAGE / LIMIT     MEM %     NET I/O       BLOCK I/O   PIDS
-c35d8b3ed3aa   alpine    0.00%     496KiB / 512MiB       0.09%     586B / 0B     0B / 0B     1
+# and we have a limit
+> CONTAINER ID   NAME      CPU %     MEM USAGE / LIMIT   MEM %     NET I/O       BLOCK I/O   PIDS
+> 12cf5d22a4a2   alpine    0.00%     536KiB / 512MiB     0.10%     1.16kB / 0B   0B / 0B     1
 
+# now, on Docker host check it's max memory cgroup for the container
+cat /sys/fs/cgroup/memory/docker/12cf5d22a4a2c381ed23629a5da3f221f951695f699ce9d415623a8d39e5e335/memory.limi
+t_in_bytes
+
+> 536870912
+
+# And from inside container. 
+cat /sys/fs/cgroup/memory/memory.limit_in_bytes
+
+> 536870912
 ```
 
-### capabilities
 
-Used by Docker to set permissions.
+### Capabilities
+
+Used by Docker to set permissions on container.
 
 ### pivot_root 
 
@@ -232,9 +263,9 @@ cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
 
 
 ## Containers
-Docker containers are created by the [Docker Runtime](#docker-runtime). Where `containerd` is used for managing the container lifecycle (start, stop etc). And `runc` is used as it's container runtime. A Container Runtime is basically how a process is isolated. And containers are just normal processes that holds namespaces. We could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use [./container-namespace](./container-namespace), which does following:
+Docker containers are created by the [Docker Runtime](#docker-runtime). `containerd` manages the container lifecycle (start, stop etc). And `runc` is used as it's Container Runtime. A Container Runtime is basically how a process is isolated. And containers are just normal processes that holds namespaces. We could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use [./container-namespace](./container-namespace), which does following:
 
-* `unshare` creates the namespaces uts, mount, pid, net and ipc. And runs `init` __inside the namespaces created__. The `--fork` flag is also given. Otherwise no new other processes could be created in the namespace.
+* `unshare` creates the namespaces uts, mount, pid, net and ipc. And runs [./init](./init) __inside the namespaces created__. The `--fork` flag is also given, otherwise no new other processes could be created in the namespace.
 * Directory above the root filesystem is mounted to itself. 
 * oldroot directory is created, which is needed by `pivot_root`.
 * `pivot_root` is used to change root to new root filesystem.
@@ -247,7 +278,7 @@ When a namespace is created, normally the current namespace context is copied. S
 
 The `net` namespace will not have it's host network information copied though, which means it will only have a loopback device per default. So a virtual network device need to be created outside container, and shared with the container `net` namespace.
 
-To run sh inside alpine image, as a container, we could do like this.
+To run sh inside alpine image, as a container, we could do like this:
 ```bash
 
 ./container-namespaces library/alpine:latest sh
