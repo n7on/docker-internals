@@ -1,5 +1,5 @@
 # Docker Internals
-Docker is a way to isolate a process, using virtually every possible way in Linux kernel. This is a basic introduction to the concepts of Docker without using Docker. 
+Docker is a way to isolate processes, using virtually every possible way in Linux kernel, but mainly `namespaces`. This is a basic introduction to the concepts of Docker without using Docker. 
 
 Following main kernel features are used by Docker:
 ### namespaces
@@ -14,42 +14,85 @@ Namespaces are used to isolate processes. So that users, hostname, network, pid'
 * `ipc`. Inter-Process Communication namespace. Like shared memory, message queues and semaphores.
 * `cgroup`. Cgroup namespace.  
 
-And each namespace is held by at least 1 process. And a process can only belong to one namespace for each type at a given time. So, if we for example start Nginx in Docker, we could list it's namespaces using `lsns`: 
+Each namespace is held by at least 1 process. And a process can only belong to one namespace for each type at a given time. And all processes per default actually belong to one of each types in the `default namespaces`. So in that sense, `the host is also a container`. This can be visualized using `lsns`:
 
 ```bash
-# start nginx
-docker run --name nginx -d -p 8080:80 nginx
+# list the init process namespaces
+sudo lsns -p 1
 
-# list all namespaces used by that process
-ps aux | grep nginx | awk '$5 == "master" {print $1}' | xargs lsns -n -p | awk '{print $1, $2}'
+4026531834 time       70   1 root /sbin/init
+4026531835 cgroup     70   1 root /sbin/init
+4026531837 user       70   1 root /sbin/init
+4026531840 net        70   1 root /sbin/init
+4026532266 ipc        70   1 root /sbin/init
+4026532277 mnt        67   1 root /sbin/init
+4026532278 uts        68   1 root /sbin/init
+4026532279 pid        70   1 root /sbin/init
+
+```
+And all other processes will inherit namespaces from it's parent process. So if we do same thing for the current shell process, we get exactly same namespace id's as with `init`: 
+
+```bash
+lsns -p $$ | awk '{print $1,$2}'
+
 4026531834 time
 4026531835 cgroup
 4026531837 user
-4026532718 mnt
-4026532719 uts
-4026532720 ipc
-4026532721 pid
-4026532722 net
+4026531840 net
+4026532266 ipc
+4026532277 mnt
+4026532278 uts
+4026532279 pid
 ```
 
-Another way this could be made is by exploring the `/dev` filesystem, which are a dynamically mounted filesystem in Linux. So for each process we have `/dev/<pid>/ns/<namespace>`, and we could get same information as above using:
+We could start a new shell with new `uts` namespace using `unshare` command, which is a command that is a wrapper of the `syscall` with same name. And it's used in order to un-share a process from `default namespaces`. So we could start bash using `unshare` (to un-share from `uts` namespace) and list it's `uts` namespace id:  
+
+> Note that `unshare` need root to create all types of namespaces, except `user`. And this is also why Docker need root.  
 
 ```bash
-pid=$(ps aux | grep nginx | awk '$5 == "master" {print $1}')
+sudo unshare --uts bash
+# now running bash in new uts namespace
 
-ls -l /proc/$pid/ns
+lsns -p $$
+
+# and these namespaces is same as for init
+4026531834 time       71     1 root /sbin/init
+4026531835 cgroup     71     1 root /sbin/init
+4026531837 user       71     1 root /sbin/init
+4026531840 net        71     1 root /sbin/init
+4026532266 ipc        71     1 root /sbin/init
+4026532277 mnt        68     1 root /sbin/init
+4026532279 pid        71     1 root /sbin/init
+
+# but uts namespace have a new id
+4026536218 uts         2 74238 root bash
+```
+
+Another way a process namespaces could be viewed is by exploring the `/dev` filesystem (which are a dynamically mounted filesystem of type `proc`). For each process we have `/dev/<pid>/ns/<namespace>`, so we could show the namespaces of `init` (PID 1) using filesystem as well.
+
+```bash
+sudo ls -l /proc/1/ns
+
+lrwxrwxrwx 1 root root 0 Feb  4 16:26 cgroup -> 'cgroup:[4026531835]'
+lrwxrwxrwx 1 root root 0 Feb  4 16:26 ipc -> 'ipc:[4026532266]'
+lrwxrwxrwx 1 root root 0 Feb  4 16:26 mnt -> 'mnt:[4026532277]'
+lrwxrwxrwx 1 root root 0 Feb  4 16:26 net -> 'net:[4026531840]'
+lrwxrwxrwx 1 root root 0 Feb  4 16:26 pid -> 'pid:[4026532279]'
+lrwxrwxrwx 1 root root 0 Feb  7 18:56 pid_for_children -> 'pid:[4026532279]'
+lrwxrwxrwx 1 root root 0 Feb  4 16:26 time -> 'time:[4026531834]'
+lrwxrwxrwx 1 root root 0 Feb  7 18:56 time_for_children -> 'time:[4026531834]'
+lrwxrwxrwx 1 root root 0 Feb  4 16:26 user -> 'user:[4026531837]'
+lrwxrwxrwx 1 root root 0 Feb  4 16:26 uts -> 'uts:[4026532278]'
 
 # or for specific namespace, like "mnt"
-readlink /proc/$pid/ns/mnt
+sudo readlink /proc/1/ns/mnt
 
 ```
-> Note that `docker inspect -f '{{.State.Pid}}' nginx` wouldn't give the host namespace pid, but instead container namespace pid. And if using Docker Desktop on Windows with WSL2, containerd is running in the `docker-desktop` WSL2 distribution, so this need to run from there.
 
-Namespaces can be created using `unshare` command, and process started in namespaces using `nsenter`. Which both are basically wrappers around it's `syscalls`.
 
 ### cgroup
 
-Control Group, is a way to manage resources like memory, disk, CPU, network etc. So that resource limits can be added to a container, and so that usage can be extracted. Cgroup is structured like multiple separate hierarchies under `/sys/fs/cgroup` for each of it's subsystems, all isolated from host using it's cgroup namespace. These subsytems (also called resource controllers) are following (others exist as well):
+Control Group (also called resource controllers), is a way to manage resources like memory, disk, CPU, network etc. So that resource limits can be added to a container, and usage can be extracted. Cgroup is structured like multiple separate hierarchies under `/sys/fs/cgroup`. Which contains each of it's subsystems. And a cgroup could isolated from host using it's cgroup namespace. Following are some of these subsystem:
 
 * `blkio`. Limits i/o on block devices.
 * `cpu`. Limits CPU usage.
@@ -62,16 +105,19 @@ Control Group, is a way to manage resources like memory, disk, CPU, network etc.
 * `net_prio`. Sets priority on network traffic. 
 * `ns`. Limit access to namespaces.
 * `perf_event`. Identify cgroup membership of processes.
-* `pids`
-* `rdma`
-* `misc`
 
-We could list all the cgroups that can be managed using `lscgroup`, which corresponds to the directories inside `/sys/fs/cgroup`. When a Docker container is started, Docker Runtime will create a new child group named `docker/<container id>` under each subsystem, in it's cgroup namespace. And those could be visualized as following:
+
+We could list all the cgroups that can be managed using `lscgroup`, which corresponds to the directories inside `/sys/fs/cgroup`. When a Docker container is started, Docker Runtime will create a new child group named `docker/<container id>` under each subsystem in it's cgroup namespace. And we could run a Docker container with some limit, to explore:
 
 ```bash
-# create docker container with 
-docker run --name nginx -d -p 8080:80 nginx
+# run sh in docker container named alpine using alpine image 
+docker run --name alpine -it --rm --memory="512mb" alpine sh
 
+# run docker stats to see it's limit
+docker stats
+
+CONTAINER ID   NAME      CPU %     MEM USAGE / LIMIT     MEM %     NET I/O       BLOCK I/O   PIDS
+c35d8b3ed3aa   alpine    0.00%     496KiB / 512MiB       0.09%     586B / 0B     0B / 0B     1
 
 ```
 
@@ -88,18 +134,18 @@ Used by Docker to change root filesystem to image filesystem.
 Docker Engine runs a daemon called containerd, which will provide a service that can be used for managing Docker containers. Such as starting, stopping or pulling images. This service is used by the Docker Client executable `docker`. Normally the client connects to containerd using the Docker UNIX socket file descriptor `/var/run/docker.sock`. When a container is started, an executable path within image is provided from client. And Docker uses a Docker Runtime called `runc` to isolate the process using namespaces, mount `/dev` & `/sys` filesystems, change root of filesystem using `pivot_root` and so forth. For example, `docker run -it nginx bash` will connect to containerd and send command to run `bash` in `nginx:latest` image filesystem. Containerd will use `runc` to execute bash. And because of `-it` flags, a shared `TTY` device will be created in host that has `STDIN`, `STDOUT` & `STDERR` from bash connected to it. And it's `TTY` will be redirected by `containerd` to `docker` client, basically as a reverse shell.
 
 ## Filesystem
-Root filesystems are part of an image and contains the executables needed together with all it's dependencies (userland). When an executable on this root filesystem runs in the Docker Runtime, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features listed above. The filesystem used by Docker is a union filesystem called `overlay`, and it's just like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So same image can be shared by multiple containers.  
+Root filesystems are part of an image and contains the executables needed together with all it's dependencies (userland). When an executable on this root filesystem runs in the Docker Runtime, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features listed above. The filesystem used by Docker is a union filesystem called `overlay`, and it's just like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So, if same image are used by multiple containers, it's shared. 
 
 This introduction will not dig any further into the filesystem though. Images will be flattened and written to current filesystem to simplify in order to make other concepts more transparent. 
 
 ## Images
-Docker images are basically a list of "layers" bundled together with it's runtime configuration. Each layer is built upon previous layers, but when using it it appears as flattened. Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem. Images format is based on a manifest, which is a json file that holds all layer information and the image runtime configuration. This information is used by Docker to create the `overlay` filesystem. And the runtime configuration file hold information about what namespaces to use, which executable to run as default, capabilities etc. Which is later used by the Docker Runtime.
+Docker images are basically a manifest file which contains a list of "layers" bundled together with it's runtime configuration. Each layer is built upon previous layers, but when using it it appears as flattened. Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem. The manifest is used by Docker to create the `overlay` filesystem. And the runtime configuration file hold information about what namespaces to use, which executable to run as default, capabilities etc. Which is later used by the Docker Runtime.
 
 
 ### Download Image
 Images are usually downloaded using `docker pull`, but we could do this without Docker by calling Docker registry API's directly.  
 
-Following script requests Docker registry API's to fetch the manifest, downloads the layers and extracts it to the fileystem in correct order under `~/.docker-internals/images/<docker-hub-username>/<repo>/<tag>`. Making it visible and usable in order to explore it further.  
+Following script requests Docker registry API's to fetch the manifest, downloads the layers and extracts it to the fileystem in correct order under `~/.docker-internals/images/<docker-hub-username>/<repo>/<tag>`. Making usable in order to explore it further.  
 
 Ex. Download alpine:latest to `~/.docker-internals/images` 
 
@@ -186,17 +232,20 @@ cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
 
 
 ## Containers
-Docker containers are created by the [Docker Runtime](#docker-runtime) where `containerd` is used for managing the container lifecycle (start, stop etc). And `runc` is used as it's container runtime. A Container Runtime is basically how a process is isolated. So containers are just normal processes that holds namespaces. We could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use [./container-namespace](./container-namespace), which does following:
+Docker containers are created by the [Docker Runtime](#docker-runtime). Where `containerd` is used for managing the container lifecycle (start, stop etc). And `runc` is used as it's container runtime. A Container Runtime is basically how a process is isolated. And containers are just normal processes that holds namespaces. We could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use [./container-namespace](./container-namespace), which does following:
 
-* Start up process with it's own namespaces (uts, mount, pid, net and ipc)
-* Mount image root filesystem
-* Mount /proc
+* `unshare` creates the namespaces uts, mount, pid, net and ipc. And runs `init` __inside the namespaces created__. The `--fork` flag is also given. Otherwise no new other processes could be created in the namespace.
+* Directory above the root filesystem is mounted to itself. 
+* oldroot directory is created, which is needed by `pivot_root`.
+* `pivot_root` is used to change root to new root filesystem.
+* `proc` filesystem is mounted to `/proc`.
+* oldroot is unmounted and removed.
+* hostname is changed to image name.
+* The bash process is __replaced__ with the intended process, which is part of the new root filesystem. This is needed because the process started need to be PID 1. 
 
-When a namespace is created, normally the current namespace is copied. So for example `uts` still has it's hosts hostname. But if it's changed within the namespace, it's isolated from host. Same thing with `mounts`. But because `--mount-proc` and `--root` are given, `/proc` is mounted to new root filesystem and therefore resetting both `pid` and `mounts`. 
+When a namespace is created, normally the current namespace context is copied. So for example `uts` still has it's hosts hostname. But if it's changed within the namespace, it's isolated from host. Same thing with `mnt` namespace, but it will be reset because `/proc` is mounted to new root filesystem.  
 
-The `net` namespace will not have it's host network information copied though, which means it will only have a loopback device per default, making this container not able to connect to Internet. This could be achived by creating a virtual network device at the host, and share it with the `net` namespace.
-
-> This example is not using `pivot_root` but instead uses `unshare` with `--root` switch. The reason for that is because `pivot_root`  need to be done for each process (it's not maintained in any namespace). Making this possible in a shell using `pivot_root` executable, but it's not possible for any arbitrary executable unless the `pivot_root` syscall is used.
+The `net` namespace will not have it's host network information copied though, which means it will only have a loopback device per default. So a virtual network device need to be created outside container, and shared with the container `net` namespace.
 
 To run sh inside alpine image, as a container, we could do like this.
 ```bash

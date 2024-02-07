@@ -29,8 +29,13 @@ if [ ! -d "$fs_path" ];then
     eval "$script_path/image-download $repo:$tag"
 fi
 
+# create container namespaces outside container. So namespaces are persisted.
+mkdir -p $ns_path
+sudo mount --bind $ns_path $ns_path
+touch $ns_path/{user,uts,ipc,net,pid,mount}
+sudo mount --make-private $ns_path
+cd $repo_path
 
-sudo unshare --root=$fs_path --uts --mount --pid --net --ipc --mount-proc --fork  env -i HOME=/root PS1="$repo\$ " PATH=/bin:/usr/bin:/sbin:/usr/sbin TERM="$TERM" "$cmd" "${@:3}"
-
+sudo unshare --uts=$ns_path/uts --mount=$ns_path/mount --pid=$ns_path/pid --net=$ns_path/net --ipc=$ns_path/uts --fork bash $script_path/init $tag "${@:2}"
 
 exit 0
