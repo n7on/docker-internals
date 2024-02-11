@@ -1,18 +1,35 @@
+hostname="$1"
+fs_path="$2"
+
 # needed by pivot_root
-mount --bind $1 $1
+mount --bind $fs_path $fs_path
 # enter root filesystem
-cd $1
+cd $fs_path
 # old root will be mounted by pivot_root
 mkdir -p oldroot
+
 # set new root
 pivot_root . oldroot
 # set PATH
 PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
 # mount /proc
 mount -t proc proc /proc
+#mount /sys
+mount -t sysfs sys /sys
+
+# mount /dev
+mount -t devtmpfs none /dev
+#mount /dev/pts
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts
+
 # unmount oldroot, so it can be removed 
 umount -l oldroot
 # remove oldroot
 rmdir oldroot
+
+hostname "$hostname"
+
 # Run the indended process using same process id
-exec "${@:2}"
+exec "${@:3}"

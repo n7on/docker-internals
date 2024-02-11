@@ -265,18 +265,20 @@ cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
 ## Containers
 Docker containers are created by the [Docker Runtime](#docker-runtime). `containerd` manages the container lifecycle (start, stop etc). And `runc` is used as it's Container Runtime. A Container Runtime is basically how a process is isolated. And containers are just normal processes that holds namespaces. We could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use [./container-namespace](./container-namespace), which does following:
 
-* `unshare` creates the namespaces uts, mount, pid, net and ipc. And runs [./init](./init) __inside the namespaces created__. The `--fork` flag is also given, otherwise no new other processes could be created in the namespace.
+* `unshare` creates the namespaces uts, mount, pid and ipc. And runs [./init](./init) __inside the namespaces created__. The `--fork` flag is also given, otherwise no new other processes could be created in the namespace. 
+
+[./init](./init) runs following:
 * Directory above the root filesystem is mounted to itself. 
 * oldroot directory is created, which is needed by `pivot_root`.
 * `pivot_root` is used to change root to new root filesystem.
 * `proc` filesystem is mounted to `/proc`.
+* `sys` filesystem is mounted to `/sys`.
+* `dev` filesystem is mounted to `/dev`.
 * oldroot is unmounted and removed.
 * hostname is changed to image name.
 * The bash process is __replaced__ with the intended process, which is part of the new root filesystem. This is needed because the process started need to be PID 1. 
 
 When a namespace is created, normally the current namespace context is copied. So for example `uts` still has it's hosts hostname. But if it's changed within the namespace, it's isolated from host. Same thing with `mnt` namespace, but it will be reset because `/proc` is mounted to new root filesystem.  
-
-The `net` namespace will not have it's host network information copied though, which means it will only have a loopback device per default. So a virtual network device need to be created outside container, and shared with the container `net` namespace.
 
 To run sh inside alpine image, as a container, we could do like this:
 ```bash

@@ -29,13 +29,10 @@ if [ ! -d "$fs_path" ];then
     eval "$script_path/image-download $repo:$tag"
 fi
 
-# create container namespaces outside container. So namespaces are persisted.
-mkdir -p $ns_path
-sudo mount --bind $ns_path $ns_path
-touch $ns_path/{user,uts,ipc,net,pid,mount}
-sudo mount --make-private $ns_path
-cd $repo_path
+echo "nameserver 8.8.8.8" > $fs_path/etc/resolv.conf
+sudo chroot "$fs_path" chmod 1777 /tmp
 
-sudo unshare --uts=$ns_path/uts --mount=$ns_path/mount --pid=$ns_path/pid --net=$ns_path/net --ipc=$ns_path/uts --fork bash $script_path/init $tag "${@:2}"
+cd $repo_path
+sudo unshare  --uts --mount --pid --ipc --fork bash $script_path/init "$(echo $repo | cut -f2 -d/)" $tag "${@:2}"
 
 exit 0
