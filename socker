@@ -1,0 +1,194 @@
+#!/bin/bash
+set -eo pipefail
+
+platform="amd64"
+os="linux"
+repo=${2%*:*}
+tag=${2#*:*}
+images_path="$HOME/.docker-internals/images"
+fs_path="$images_path/$repo/$tag"
+repo_path="$images_path/$repo"
+tarball_path="$images_path/$repo/$tag.tar.gz"
+config_path="$images_path/$repo/$tag.json"
+
+registry_auth_url="https://auth.docker.io/token?service=registry.docker.io&scope=repository:$repo:pull"
+registry_uri=https://registry-1.docker.io/v2
+script_path=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+function die(){
+    echo "Error: $1" 1>&2
+    exit 1
+}
+
+function help(){
+    cat << "EOF"
+                               /$$                          
+                              | $$                          
+  /$$$$$$$  /$$$$$$   /$$$$$$$| $$   /$$  /$$$$$$   /$$$$$$ 
+ /$$_____/ /$$__  $$ /$$_____/| $$  /$$/ /$$__  $$ /$$__  $$
+|  $$$$$$ | $$  \ $$| $$      | $$$$$$/ | $$$$$$$$| $$  \__/
+ \____  $$| $$  | $$| $$      | $$_  $$ | $$_____/| $$      
+ /$$$$$$$/|  $$$$$$/|  $$$$$$$| $$ \  $$|  $$$$$$$| $$      
+|_______/  \______/  \_______/|__/  \__/ \_______/|__/ 
+
+EOF
+    echo "   *---------- Usage: socker pull|push|run <repo>/<image>:<tag> <command>"
+    exit 0
+}
+
+function image_get_token(){
+    curl -s "$registry_auth_url" | jq -r '.token'
+} 
+function image_get_push_token(){
+    curl -s -u "$DOCKER_USERNAME:$DOCKER_PASSWORD"  "$registry_auth_url,push" | jq -r '.token'
+}
+
+function image_get_manifest(){
+    local api="application/vnd.docker.distribution.manifest.v2+json"
+    local apil="application/vnd.docker.distribution.manifest.list.v2+json"
+    local apii="application/vnd.oci.image.manifest.v1+json"
+    local url="$registry_uri/$1/manifests/$2"
+    
+    local resp=$(curl -H "Accept: ${apil}" -H "Accept: ${api}" -H "Accept: ${apii}" -H "Authorization: Bearer $3" -s "$url")
+
+    if echo $resp | jq -e '.errors' > /dev/null; then
+        die "Image $repo:$tag doesn't exist!"
+    fi
+
+    echo "$resp"
+}
+
+function image_get_layer(){
+    local api="application/vnd.oci.image.manifest.v1+json"
+    local url="$registry_uri/$1/blobs/$2"
+
+    echo "Downloading layer: ${2#sha256:}"
+    curl -L -H "Accept: ${api}" -H "Authorization: Bearer $3" -s "$url" | tar xz -C "$4"
+}
+
+
+function image_put_blob(){
+    local url="$registry_uri/$1/blobs/uploads"
+    local size=$(stat -c%s "$3")
+    local digest=sha256:$(sha256sum $3 | cut -d ' ' -f1)
+    # get upload url
+    local location=$(curl  -X POST -si -H "Authorization: Bearer $2" "$url/" | grep location | sed 's/^location: //' | tr -d ' ' | tr -d '\r')
+
+    # upload file
+    curl -X PUT -s -H "Authorization: Bearer $2" -H "Content-Type: application/octet-stream" -H "Content-Length: $size" --data-binary @"$3" "$location&digest=$digest"
+
+    # validate
+    curl -s -H "Authorization: Bearer $2" "$registry_uri/$1/blobs/$digest"
+
+    echo "$digest,$size"
+}
+
+function image_put(){
+    local url="$registry_uri/$1/manifests/$3"
+
+    local layer=$(image_put_blob $1 $2 "$tarball_path")
+    local config=$(image_put_blob $1 $2 "$config_path")
+
+    local manifest='{
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+    "config": {
+        "mediaType": "application/vnd.docker.container.image.v1+json",
+        "digest": "'$(echo $config | cut -f1 -d,)'"
+    },
+    "layers": [
+        {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "'$(echo $layer | cut -f1 -d,)'",
+            "size": '$(echo $config | cut -f2 -d,)'
+        }
+    ]
+    }'
+
+    curl -X PUT -s -H "Authorization: Bearer $token" -H "Content-Type: application/vnd.docker.distribution.manifest.v2+json" --data "$manifest" "$url"
+}
+
+
+[[ $2 =~ ^[a-z0-9_-]+/[a-z0-9_-]+:[a-z0-9_-]+$ ]] || help
+
+if ! command -v jq &> /dev/null; then
+    die "jq is not installed!"
+fi
+
+case "$1" in 
+    pull)
+    [ ! -d "$fs_path" ] || die "Image already downloaded in $fs_path"
+    
+    token=$(image_get_token $repo)
+    resp=$(image_get_manifest $repo $tag $token)
+
+    if echo $resp | jq -e 'has("manifests")' > /dev/null; then
+        digest=$(echo $resp | jq -r ".manifests | .[] | select(.platform.architecture == \"${platform}\" and .platform.os == \"${os}\") | .digest")
+        resp=$(image_get_manifest $repo $digest $token)
+    fi
+
+    echo "Downloading to: $fs_path"
+    mkdir -p "$fs_path"
+    echo $resp | jq -r '.layers[] | .digest' | while read l; do
+        image_get_layer $repo $l $token $fs_path
+    done;
+    ;;
+    push)
+    [ -d "$fs_path" ] || die "No filesystem found in: $fs_path"
+
+    [ -z "$DOCKER_USERNAME" -o -z "$DOCKER_PASSWORD" ] && die "DOCKER_USERNAME or DOCKER_PASSWORD not set!"
+
+    if [ ! -f $config_path ];then
+        echo -e "{\n\t\"Cmd\": [\"sh\"]\n}" > $config_path 
+    fi
+    
+    tar -czf $tarball_path -C $fs_path .
+    image_put $repo $(image_get_push_token $repo) $tag 
+    ;;
+    run)
+
+    [ ! -d "$fs_path" ] && eval "$script_path/socker pull $repo:$tag"
+    echo "nameserver 8.8.8.8" > $fs_path/etc/resolv.conf
+    chmod 1777 $fs_path/tmp
+    cd $repo_path
+    sudo -E unshare  --uts --mount --pid --ipc --fork bash $script_path/socker init $repo:$tag "${@:3}"
+    ;;
+    init)
+    cd $repo_path
+    hostname=$(echo $repo | cut -f2 -d/)
+    fs_folder=$(basename $fs_path)
+
+    # needed by pivot_root
+    mount --bind $fs_folder $fs_folder
+    # enter root filesystem
+    cd $fs_folder
+    # old root will be mounted by pivot_root
+    mkdir -p oldroot
+
+    # set new root
+    pivot_root . oldroot
+    # set PATH
+    PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+    # mount /proc
+    mount -t proc proc /proc
+    #mount /sys
+    mount -t sysfs sys /sys
+
+    # mount /dev
+    mount -t devtmpfs none /dev
+    #mount /dev/pts
+    mkdir -p /dev/pts
+    mount -t devpts devpts /dev/pts
+
+    # unmount oldroot, so it can be removed 
+    umount -l oldroot
+    # remove oldroot
+    rmdir oldroot
+
+    hostname "$hostname"
+
+    # Run the indended process using same process id
+    exec "${@:3}"
+    ;;
+esac

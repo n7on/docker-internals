@@ -1,7 +1,7 @@
 # Docker Internals
-Docker is a way to isolate processes, using virtually every possible way in Linux kernel, but mainly `namespaces`. This is a basic introduction to the concepts of Docker without using Docker. 
+Docker is a way to isolate a process from the rest of system using kernel features. This is an introduction to some of the parts Docker uses to accomplish that. And to provide better examples, a small PoC named `socker` is made, which can be used to get better understanding.
 
-
+* [Socker](#socker)
 * [Namespaces](#namespaces)
 * [Cgroups](#cgroups)
 * [Capabilities](#capabilities)
@@ -14,10 +14,56 @@ Docker is a way to isolate processes, using virtually every possible way in Linu
 * [Containers](#containers)
 * [Other uses of Docker Images](#other-uses-of-docker-images)
 
+## Socker
+
+[socker](./socker) implements the core features of Docker in under 200 loc using bash. Image root filesystem is downloaded and extracted to `~/.socker/images/<user>/<repo>/<tag>`
+
+### Prerequisites
+* Bash
+* jq
+
+### Install
+```bash
+curl -sO https://raw.githubusercontent.com/n7on/docker-internals/main/socker && sudo mv socker /usr/sbin/
+```
+
+### Examples
+
+1. Pull nginx to `~/.socker/images/library/nginx/latest`
+```bash
+socker pull library/nginx:latest 
+```
+
+2. Run bash in Nginx
+```bash
+socker pull library/nginx:latest 
+```
+
+3. Pull Nginx, change something, and push it to own registry.
+```bash
+socker pull library/nginx:latest
+
+# move to new repository
+mkdir ~/.socker/images/<username>/
+mv ~/.socker/images/library/nginx ~/.socker/images/<username>/<repo>
+
+# do something in new image, like install vim
+socker run <username>/<repo>:latest bash
+>apt update
+>apt install vim
+>exit
+
+# set user/passwd
+export DOCKER-USERNAME=<username>
+export DOCKER-PASSWORD=<password>
+
+# push image
+socker push <username>/<repo>:latest
+
+```
 
 
-Following main kernel features are used by Docker:
-### Namespaces
+## Namespaces
 
 Namespaces are used to isolate processes. So that users, hostname, network, pid's etc only are visible from it's namespaces. This is the main concept of Docker Containers. Namespaces have 8 different types: 
 * `net`. Network interfaces namespace.
@@ -83,7 +129,7 @@ lsns -p $$
 > 4026536218 uts         2 74238 root bash
 ```
 
-Another way a process namespaces could be viewed is by exploring the `/dev` filesystem. Which are a pseudo filesystem provided by the kernel. For each process we have `/dev/<pid>/ns/<namespace>`, so we could list the namespaces of `init` (PID 1) using filesystem as well.
+Another way a process namespaces could be viewed is by exploring the `/proc` filesystem. Which are a pseudo filesystem provided by the kernel. For each process we have `/proc/<pid>/ns/<namespace>`, so we could list the namespaces of `init` (PID 1) using filesystem as well.
 
 ```bash
 sudo ls -l /proc/1/ns
@@ -105,7 +151,7 @@ sudo readlink /proc/1/ns/mnt
 ```
 
 
-### Cgroups
+## Cgroups
 
 Control Group (also called resource controllers), is a way to manage resources like memory, disk, CPU, network etc. So that resource limits can be added to a container, and usage can be extracted. Cgroup is structured like multiple separate hierarchies under `/sys/fs/cgroup`. Which contains each of it's subsystems. And a `cgroup` is isolated from host using it's `cgroup` namespace. When a Docker container is started, Docker Runtime will create a new child group named `docker/<container id>` under each subsystem. The host `cgroup` namespace will be copied, and if a limit is added it will be changed in the namespace. Following are some of these subsystem:
 
@@ -152,11 +198,11 @@ cat /sys/fs/cgroup/memory/memory.limit_in_bytes
 ```
 
 
-### Capabilities
+## Capabilities
 
-Used by Docker to set permissions on container.
+Used by Docker to set permissions on a process running in a container.
 
-### pivot_root 
+## pivot_root 
 
 Used by Docker to change root filesystem to image filesystem.
 
@@ -174,23 +220,23 @@ Docker images are basically a manifest file which contains a list of "layers" bu
 
 
 ### Download Image
-Images are usually downloaded using `docker pull`, but we could do this without Docker by calling Docker registry API's directly.  
+Images are usually downloaded using `docker pull`, but we could do this with [socker](./socker) instead, calling Docker registry API's directly.  
 
-Following script requests Docker registry API's to fetch the manifest, downloads the layers and extracts it to the fileystem in correct order under `~/.docker-internals/images/<docker-hub-username>/<repo>/<tag>`. Making usable in order to explore it further.  
+`socker` requests Docker registry API's to fetch the manifest, downloads the layers and extracts it to the fileystem in correct order under `~/.socker/images/<docker-hub-username>/<repo>/<tag>`. Making usable in order to explore it further.  
 
-Ex. Download alpine:latest to `~/.docker-internals/images` 
+Ex. Download alpine:latest to `~/.socker/images` 
 
 ``` bash
 
 # note: in the main Docker Registry, all official images are part of the "library" "user".
-./image-download library/alpine:latest
+socker pull library/alpine:latest
 
 ```
 
 ### Upload Image
-Images are usually uploaded using `docker push`, but we could do this without Docker by calling Docker Registry API's directly using [./image-upload](./image-upload). You probably would want to first use [./image-download](./image-download) to download some other image to work on, and move that to `~/.docker-internals/images/<docker-hub-username>/`
+Images are usually uploaded using `docker push`, but we could do this with [socker](./socker) instead, calling Docker Registry API's directly. You probably would want to first do `socker pull` to download some other image to work on, and move that to `~/.socker/images/<username>/`
 
-[./image-upload](./image-upload) expects following environment variables to be exported before running.
+`socker push` expects following environment variables to be exported before running.
 
 ```bash
 export DOCKER_USERNAME=<your username>
@@ -200,26 +246,26 @@ export DOCKER_PASSWORD=<your password>
 
 Ex. Move Nginx image/filesystem so it can be altered and uploaded to your own Docker Repo.
 ```bash
-mkdir -p ~/.docker-internals/images/<docker-hub-username>
-mv ~/.docker-internals/images/library/nginx ~/.docker-internals/images/<docker-hub-username>/nginx
+mkdir -p ~/.socker/images/<username>
+mv ~/.socker/images/library/nginx ~/.socker/images/<username>/<repo>
 
 ```
 
-Ex. Upload `~/.docker-internals/images/<docker-hub-username>/alpine/latest` to `<docker-hub-username>/alpine:latest`  
+Ex. Upload `~/.socker/images/<username>/alpine/latest` to `<username>/alpine:latest`  
 ``` bash
 
 # note: in the main Docker registry, all official images are part of the "library" repository.
-./image-upload <docker-hub-username>/alpine:latest
+socker put <username>/alpine:latest
 
 ```
 
 
 ### Create Image
-Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to `/.docker-internals/images/<docker-hub-username>/<repository>/<tag>/` path and run [./image-upload](./image-upload). Which upload the manifest, configuration file and a single layer (as a tarball) to Docker repository using it's API's. Executables in Linux usually have dependencies to shared objects (dynamic libraries), so we need to add them as well. With that in mind, we would create an Image with only `ls` and `bash`, and upload it to our own Docker Repo, as a base-image:
+Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to `/.socker/images/<username>/<repo>/<tag>/` path and run `socker push <username>/<repo>:<tag>`. Which upload the manifest, configuration file and a single layer (as a tarball) to Docker repository using it's API's. Executables in Linux usually have dependencies to shared objects (dynamic libraries), so we need to add them as well. With that in mind, we would create an Image with only `ls` and `bash`, and upload it to our own Docker Repo, as a base-image:
 
 ```bash
 # 1. create folders
-path=~/.docker-internals/images/<docker-hub-username>/<repository>/<tag>/
+path=~/.socker/images/<username>/<repo>/<tag>/
 mkdir -p $path/{bin,lib}
 
 cd $path
@@ -257,17 +303,19 @@ cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
 # export DOCKER_USERNAME=<docker-hub-username>
 # export DOCKER_PASSWORD=<docker-hub-password>
 #
-./image-upload <docker-hub-username>/<repository>:<tag>
+socker push <docker-hub-username>/<repository>:<tag>
 
 ```
 
 
 ## Containers
-Docker containers are created by the [Docker Runtime](#docker-runtime). `containerd` manages the container lifecycle (start, stop etc). And `runc` is used as it's Container Runtime. A Container Runtime is basically how a process is isolated. And containers are just normal processes that holds namespaces. We could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use [./container-namespace](./container-namespace), which does following:
+Docker containers are created by the [Docker Runtime](#docker-runtime). `containerd` manages the container lifecycle (start, stop etc). And `runc` is used as it's Container Runtime. A Container Runtime is basically how a process is isolated. And containers are just normal processes that holds namespaces. We could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use `socker run`, which does following:
 
-* `unshare` creates the namespaces uts, mount, pid and ipc. And runs [./init](./init) __inside the namespaces created__. The `--fork` flag is also given, otherwise no new other processes could be created in the namespace. 
+* `unshare` creates the namespaces uts, mount, pid and ipc. And runs `socker init` __inside the namespaces created__. The `--fork` flag is also given, otherwise no new other processes could be created in the namespace. 
 
-[./init](./init) runs following:
+> Note that `socker init` should never run outside namespace!  
+
+`socker init`
 * Directory above the root filesystem is mounted to itself. 
 * oldroot directory is created, which is needed by `pivot_root`.
 * `pivot_root` is used to change root to new root filesystem.
@@ -283,21 +331,21 @@ When a namespace is created, normally the current namespace context is copied. S
 To run sh inside alpine image, as a container, we could do like this:
 ```bash
 
-./container-namespaces library/alpine:latest sh
+socker run library/alpine:latest sh
 ```
 
 ## Other uses of Docker Images
-Docker Image root filesystems can also be used in other ways. Because when we [Download Image](#download-image) it's separated from Docker and it's image concept, and it could be used for whatever purpose. 
+Docker Image root filesystems can also be used in other ways. Because when we do `socker pull` it's separated from Docker and it's image concept, and it could be used for whatever purpose. 
 
 ### chroot
-We could download the image without Docker (using [./image-download](./image-download)) and chroot into the extracted root filesystem. This would only isolate filesystem though, so it doesn't qualify as a container. It's convenient though, for testing and exploring an image.
+We could download the image without Docker (using `socker pull`) and chroot into the extracted root filesystem. This would only isolate filesystem though, so it doesn't qualify as a container. It's convenient though, for testing and exploring an image.
 
 Ex. Use image root filesystem with chroot.
 
 ``` bash
 
 # note: in the main Docker Registry, all official images are part of the "library" "user".
-./container-chroot library/alpine:latest sh
+./chroot library/alpine:latest sh
 
 ```
 
@@ -323,10 +371,10 @@ And copy tarball to that folder
 # Linux
 
 # download
-./image-download library/alpine:latest
+socker pull library/alpine:latest
 
 # pack
-tar -czvf alpine.tar.gz -C ~/.docker-internals/library/alpine/latest .
+tar -czvf alpine.tar.gz -C ~/.socker/library/alpine/latest .
 
 # copy
 cp alpine.tar.gz /mnt/c/WSLDistros/
