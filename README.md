@@ -1,7 +1,7 @@
 # Docker Internals
 Docker is a way to isolate a process from the rest of system using kernel features. This is an introduction to some of the parts Docker uses to accomplish that. And to provide better examples, a small PoC named `socker` is made, which can be used to get better understanding.
 
-* [Socker](#socker)
+* [PoC - Socker](#socker)
 * [Namespaces](#namespaces)
 * [Cgroups](#cgroups)
 * [Capabilities](#capabilities)
@@ -24,7 +24,7 @@ Docker is a way to isolate a process from the rest of system using kernel featur
 
 ### Install
 ```bash
-curl -sO https://raw.githubusercontent.com/n7on/docker-internals/main/socker && sudo mv socker /usr/sbin/
+curl -sO https://raw.githubusercontent.com/n7on/docker-internals/main/socker && sudo mv socker /usr/sbin/ && sudo chmod 755 /usr/sbin/socker
 ```
 
 ### Examples

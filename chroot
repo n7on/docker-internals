@@ -4,7 +4,7 @@ set -eo pipefail
 repo=${1%:*}
 tag=${1#*:}
 cmd="$2"
-images_path="$HOME/.docker-internals/images"
+images_path="$HOME/.socker/images"
 fs_path="$images_path/$repo/$tag"
 script_path=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
@@ -17,7 +17,7 @@ function help(){
 [ -n "$cmd" ] || help
 
 if [ ! -d "$fs_path" ];then
-    eval "$script_path/image-download $repo:$tag"
+    eval "$script_path/socker pull $repo:$tag"
 fi
 
 
