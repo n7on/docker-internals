@@ -182,7 +182,7 @@ Doing that would make the root `/` point to the filesystem inside `$fs_folder`.
 Docker Engine runs a daemon called containerd, which will provide a service that can be used for managing Docker containers. Such as starting, stopping or pulling images. This service is used by the Docker Client executable `docker`. Normally the client connects to containerd using the Docker UNIX socket file descriptor `/var/run/docker.sock`. When a container is started, an executable path within image is provided from client. And Docker uses a Docker Runtime called `runc` to isolate the process using namespaces, mount `/dev` & `/sys` filesystems, change root of filesystem using `pivot_root` and so forth. For example, `docker run -it nginx bash` will connect to containerd and send command to run `bash` in `nginx:latest` image filesystem. Containerd will use `runc` to execute bash. And because of `-it` flags, a shared `TTY` device will be created in host that has `STDIN`, `STDOUT` & `STDERR` from bash connected to it. And it's `TTY` will be redirected by `containerd` to `docker` client, basically as a reverse shell.
 
 ## Docker Runtime
-Docker containers are created by the Docker Runtime `runc`. And a container are simply an isolated environment where processes can run. `runc` need a filesystem and a `runtime configuration` in order to create a container. So to use `runc` directly we could do following:
+Docker containers are created by the Docker Runtime `runc`. And a container are simply an isolated environment where processes can run. `runc` need a filesystem and a `runtime configuration` in order to create a container. Or more correctly, [Docker Engine](#docker-engine) translates information from `OCI image apecification` to `OCI runtime specification` and provides that to`runc`. And we're missing that logic, but we could create a base `OCI specification` using `runc spec` that we could later manually edit:
 
 ```bash
 docker run --name ubuntu ubuntu
@@ -194,6 +194,12 @@ tar -xf rootfs.tar -C ./rootfs
 
 # create config.json
 runc spec
+
+# modify 
+# add capabilities
+#   * CAP_SETUID
+#   * CAP_SETGID
+# change root->readonly = false
 
 # run container 
 runc run containerid
@@ -208,4 +214,4 @@ Root filesystems are part of an image and contains the executables needed togeth
 
 
 ## Docker Image
-Docker images are basically a manifest file which contains a list of "layers" bundled together with it's runtime configuration. Each layer is built upon previous layers, but when using it it appears as flattened. Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem. The manifest is used by Docker to create the `overlay` filesystem. And the runtime configuration file hold information about what namespaces to use, which executable to run as default, capabilities etc. Which is later used by the [Docker Runtime](#docker-runtime).
+Docker images use the `OCI image apecification` which basically is a manifest file that contains a list of "layers" bundled together with it's `runtime configuration`. Each layer is built upon previous layers, but when using it it appears as flattened. Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem. The manifest is used by Docker to create the `overlay` filesystem. And the runtime configuration file hold information about what namespaces to use, which executable to run as default, capabilities etc. Which is later used by the [Docker Runtime](#docker-runtime).
