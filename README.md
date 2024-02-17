@@ -206,7 +206,7 @@ runc run containerid
 
 ```
 
-The first process created inside a container is always `PID 1`. And in a Linux system this usually `systemd` or `SysV init`. So a container doesn't do any bootstrap or management of user processes. All this is handled by [Docker Engine](#docker-engine) instead. And when `PID 1` is terminated, so is the container.
+The first process created inside a container is always `PID 1`. And in a Linux system it's usually `systemd` or `SysV init`. So a container doesn't do any bootstrap or management of user processes. All this is handled by [Docker Engine](#docker-engine) instead. And when `PID 1` is terminated, so is the container.
 
 
 ## Docker Filesystem
@@ -214,4 +214,4 @@ Root filesystems are part of an image and contains the executables needed togeth
 
 
 ## Docker Image
-Docker images use the `OCI image apecification` which basically is a manifest file that contains a list of "layers" bundled together with it's `runtime configuration`. Each layer is built upon previous layers, but when using it it appears as flattened. Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem. The manifest is used by Docker to create the `overlay` filesystem. And the runtime configuration file hold information about what namespaces to use, which executable to run as default, capabilities etc. Which is later used by the [Docker Runtime](#docker-runtime).
+Docker images implements the `OCI image apecification` which basically is a manifest file that contains a list of `layers` bundled together with it's `runtime configuration` file. Each layer is built upon previous layers, but when using it it appears as flattened. Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem. The manifest is used by Docker to create the `overlay` filesystem. And the runtime configuration file hold information about what namespaces to use, which executable to run as default, capabilities etc. Which is later used by the [Docker Runtime](#docker-runtime).
