@@ -1,71 +1,9 @@
 # Docker Internals
-Docker is a way to isolate a process from the rest of system using kernel features. This is an introduction to some of the parts Docker uses to accomplish that. And to provide better examples, a small PoC named `socker` is made, which can be used to get better understanding.
-
-* [PoC - Socker](#socker)
-* [Namespaces](#namespaces)
-* [Cgroups](#cgroups)
-* [Capabilities](#capabilities)
-* [Docker Runtime](#docker-runtime)
-* [Filesystem](#filesystem)
-* [Images](#images)
-* [Download Image](#download-image)
-* [Upload Image](#upload-image)
-* [Create Image](#create-image)
-* [Containers](#containers)
-* [Other uses of Docker Images](#other-uses-of-docker-images)
-
-## Socker
-
-[socker](./socker) implements the core features of Docker in under 200 loc using bash. Image root filesystem is downloaded and extracted to `~/.socker/images/<user>/<repo>/<tag>`
-
-### Prerequisites
-* Bash
-* jq
-
-### Install
-```bash
-curl -sO https://raw.githubusercontent.com/n7on/docker-internals/main/socker && sudo mv socker /usr/sbin/ && sudo chmod 755 /usr/sbin/socker
-```
-
-### Examples
-
-1. Pull nginx to `~/.socker/images/library/nginx/latest`
-```bash
-socker pull library/nginx:latest 
-```
-
-2. Run bash in Nginx
-```bash
-socker pull library/nginx:latest 
-```
-
-3. Pull Nginx, change something, and push it to own registry.
-```bash
-socker pull library/nginx:latest
-
-# move to new repository
-mkdir ~/.socker/images/<username>/
-mv ~/.socker/images/library/nginx ~/.socker/images/<username>/<repo>
-
-# do something in new image, like install vim
-socker run <username>/<repo>:latest bash
->apt update
->apt install vim
->exit
-
-# set user/passwd
-export DOCKER-USERNAME=<username>
-export DOCKER-PASSWORD=<password>
-
-# push image
-socker push <username>/<repo>:latest
-
-```
+Docker is a way to isolate a process from the rest of system using kernel features such as [namespaces](#namespaces), [cgroups](#cgroups), [capabilities](#capabilities) and [pivot_root](#pivot_root). When these features are used in conjunction to create an isolated environment, it's called a container. When a new container is created using [Docker Engine](#docker-engine) a [Docker Image](#docker-image) need to be provided. The root filesystem in the image is added to [Docker Filesystem](#docker-filesystem). And the runtime configuration in the image is used by the [Docker Runtime](#docker-runtime) to create the process inside the container.  
 
 
-## Namespaces
-
-Namespaces are used to isolate processes. So that users, hostname, network, pid's etc only are visible from it's namespaces. This is the main concept of Docker Containers. Namespaces have 8 different types: 
+## namespaces
+Namespaces are used to isolate processes. So that users, hostname, network, pid's etc only are visible from it's namespaces. This is the main concept of containers. Namespaces have 8 different types: 
 * `net`. Network interfaces namespace.
 * `mnt`. Mount namespace.
 * `uts`. Hostname namespace.
@@ -75,7 +13,7 @@ Namespaces are used to isolate processes. So that users, hostname, network, pid'
 * `ipc`. Inter-Process Communication namespace. Like shared memory, message queues and semaphores.
 * `cgroup`. Cgroup namespace.  
 
-Each namespace is held by at least 1 process. And a process can only belong to one namespace for each type at a given time. And all processes per default actually belong to one of each types in the `default namespaces`. So in that sense, `the host is also a container`. This can be visualized using `lsns`:
+Each namespace is held by at least 1 process. And a process can only belong to one namespace for each type at a given time. And all processes per default actually belong to one of each types in the `default namespaces`, which are held by the systems `PID 1`. So in that sense, `the host is also a container`. This can be visualized using `lsns`:
 
 ```bash
 # list the init process namespaces
@@ -106,9 +44,9 @@ lsns -p $$ | awk '{print $1,$2}'
 > 4026532279 pid
 ```
 
-We could start a new shell with new `uts` namespace using `unshare` command, which is a command that is a wrapper of the `syscall` with same name. And it's used in order to un-share a process from `default namespaces`. So we could start bash using `unshare` (to un-share from `uts` namespace) and list it's `uts` namespace id:  
+We could start a new shell with new `uts` namespace using `unshare` command, which is a command that is a wrapper of the `syscall` with same name. And it's used in order to un-share a process from `default namespaces`. So we could start bash using `unshare` (to un-share from `uts` default namespace) and list it's new `uts` namespace id:  
 
-> Note that `unshare` need root to create all types of namespaces, except `user`. And this is also why Docker need root.  
+> Note that `unshare` need root to create all types of namespaces except `user`. And this is also why Docker need root.  
 
 ```bash
 sudo unshare --uts bash
@@ -151,9 +89,8 @@ sudo readlink /proc/1/ns/mnt
 ```
 
 
-## Cgroups
-
-Control Group (also called resource controllers), is a way to manage resources like memory, disk, CPU, network etc. So that resource limits can be added to a container, and usage can be extracted. Cgroup is structured like multiple separate hierarchies under `/sys/fs/cgroup`. Which contains each of it's subsystems. And a `cgroup` is isolated from host using it's `cgroup` namespace. When a Docker container is started, Docker Runtime will create a new child group named `docker/<container id>` under each subsystem. The host `cgroup` namespace will be copied, and if a limit is added it will be changed in the namespace. Following are some of these subsystem:
+## cgroups
+Control Group (also called resource controllers), is a way to manage resources like memory, disk, CPU, network etc. So that resource limits can be added to a container, and usage can be extracted. Cgroup is structured in multiple separate hierarchies under `/sys/fs/cgroup`. Which contains each of it's subsystems. And a `cgroup` is isolated from host using it's `cgroup` namespace together with `cgroups` mounted from the host. When a Docker container is started, Docker Runtime will create a new child group named `docker/<container id>` on the host under each subsystem. The host `cgroup` namespace will be copied, and if a limit is added it will be changed in the namespace. Following are some of the cgroup subsystem:
 
 > Note that the `/sys` filesystem is just like `/dev` a pseudo filesystem provided by the kernel.
 
@@ -198,190 +135,77 @@ cat /sys/fs/cgroup/memory/memory.limit_in_bytes
 ```
 
 
-## Capabilities
+## capabilities
 
-Used by Docker to set permissions on a process running in a container.
+Capabilities are used by [Docker Engine](#docker-engine) to restrict permissions on a process running in a container. `containerd` runs as root with all capabilities (=ep). The capabilities a process currently have can be listed with `getpcaps`, so we can start up a new container and inspect:
+
+```bash
+docker run -d --name nginx nginx
+
+# from where containerd is running
+pid=$(ps aux | grep "nginx" | grep master | awk '{print $1}')
+
+getpcaps $pid
+
+>1426: cap_chown,cap_dac_override,cap_fowner,cap_fsetid,cap_kill,cap_setgid,cap_setuid,cap_setpcap,cap_net_bind_service,cap_net_raw,>cap_sys_chroot,cap_mknod,cap_audit_write,cap_setfcap=ep
+
+```
+So for instance, it has `cap_sys_chroot` which is needed by `pivot_root` to change root filesystem. It also has `cap_mknod` which is needed by some images to create special files in `/dev`. `cap_setuid` and `cap_setgid` is needed to map user and groups. In fact, most of it's capabilities are actually needed in order to initialize the container.
+
 
 ## pivot_root 
 
-Used by Docker to change root filesystem to image filesystem.
+Used by Docker to change root filesystem to image filesystem. This is done in the process which starts up the container (PID 1). Following is an example how this is done:
 
+```bash
+# needed by pivot_root
+mount --bind $fs_folder $fs_folder
 
-## Docker Runtime
+# enter root filesystem
+cd $fs_folder
+
+# oldroot will be mounted by pivot_root
+mkdir -p oldroot
+
+# set new root
+pivot_root . oldroot
+
+# unmount oldroot, so it can be removed 
+umount -l oldroot
+# remove oldroot
+rmdir oldroot
+
+```
+Doing that would make the root `/` point to the filesystem inside `$fs_folder`.
+
+## Docker Engine
 Docker Engine runs a daemon called containerd, which will provide a service that can be used for managing Docker containers. Such as starting, stopping or pulling images. This service is used by the Docker Client executable `docker`. Normally the client connects to containerd using the Docker UNIX socket file descriptor `/var/run/docker.sock`. When a container is started, an executable path within image is provided from client. And Docker uses a Docker Runtime called `runc` to isolate the process using namespaces, mount `/dev` & `/sys` filesystems, change root of filesystem using `pivot_root` and so forth. For example, `docker run -it nginx bash` will connect to containerd and send command to run `bash` in `nginx:latest` image filesystem. Containerd will use `runc` to execute bash. And because of `-it` flags, a shared `TTY` device will be created in host that has `STDIN`, `STDOUT` & `STDERR` from bash connected to it. And it's `TTY` will be redirected by `containerd` to `docker` client, basically as a reverse shell.
 
-## Filesystem
-Root filesystems are part of an image and contains the executables needed together with all it's dependencies (userland). When an executable on this root filesystem runs in the Docker Runtime, it's called a container. It's a perfectly normal process but it's isolated from the rest of the system using kernel features listed above. The filesystem used by Docker is a union filesystem called `overlay`, and it's just like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So, if same image are used by multiple containers, it's shared. 
-
-This introduction will not dig any further into the filesystem though. Images will be flattened and written to current filesystem to simplify in order to make other concepts more transparent. 
-
-## Images
-Docker images are basically a manifest file which contains a list of "layers" bundled together with it's runtime configuration. Each layer is built upon previous layers, but when using it it appears as flattened. Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem. The manifest is used by Docker to create the `overlay` filesystem. And the runtime configuration file hold information about what namespaces to use, which executable to run as default, capabilities etc. Which is later used by the Docker Runtime.
-
-
-### Download Image
-Images are usually downloaded using `docker pull`, but we could do this with [socker](./socker) instead, calling Docker registry API's directly.  
-
-`socker` requests Docker registry API's to fetch the manifest, downloads the layers and extracts it to the fileystem in correct order under `~/.socker/images/<docker-hub-username>/<repo>/<tag>`. Making usable in order to explore it further.  
-
-Ex. Download alpine:latest to `~/.socker/images` 
-
-``` bash
-
-# note: in the main Docker Registry, all official images are part of the "library" "user".
-socker pull library/alpine:latest
-
-```
-
-### Upload Image
-Images are usually uploaded using `docker push`, but we could do this with [socker](./socker) instead, calling Docker Registry API's directly. You probably would want to first do `socker pull` to download some other image to work on, and move that to `~/.socker/images/<username>/`
-
-`socker push` expects following environment variables to be exported before running.
+## Docker Runtime
+Docker containers are created by the Docker Runtime `runc`. And a container are simply an isolated environment where processes can run. `runc` need a filesystem and a `runtime configuration` in order to create a container. So to use `runc` directly we could do following:
 
 ```bash
-export DOCKER_USERNAME=<your username>
-export DOCKER_PASSWORD=<your password>
+docker run --name ubuntu ubuntu
+mkdir test; cd test
+# export rootfs
+docker export ubuntu > rootfs.tar
+mkdir rootfs
+tar -xf rootfs.tar -C ./rootfs
+
+# create config.json
+runc spec
+
+# run container 
+runc run containerid
 
 ```
 
-Ex. Move Nginx image/filesystem so it can be altered and uploaded to your own Docker Repo.
-```bash
-mkdir -p ~/.socker/images/<username>
-mv ~/.socker/images/library/nginx ~/.socker/images/<username>/<repo>
-
-```
-
-Ex. Upload `~/.socker/images/<username>/alpine/latest` to `<username>/alpine:latest`  
-``` bash
-
-# note: in the main Docker registry, all official images are part of the "library" repository.
-socker put <username>/alpine:latest
-
-```
+The first process created inside a container is always `PID 1`. And in a Linux system this usually `systemd` or `SysV init`. So a container doesn't do any bootstrap or management of user processes. All this is handled by [Docker Engine](#docker-engine) instead. And when `PID 1` is terminated, so is the container.
 
 
-### Create Image
-Docker Images are usually created using a Dockerfile and `docker build`. But we could do this without Docker by copying what we need to `/.socker/images/<username>/<repo>/<tag>/` path and run `socker push <username>/<repo>:<tag>`. Which upload the manifest, configuration file and a single layer (as a tarball) to Docker repository using it's API's. Executables in Linux usually have dependencies to shared objects (dynamic libraries), so we need to add them as well. With that in mind, we would create an Image with only `ls` and `bash`, and upload it to our own Docker Repo, as a base-image:
-
-```bash
-# 1. create folders
-path=~/.socker/images/<username>/<repo>/<tag>/
-mkdir -p $path/{bin,lib}
-
-cd $path
-
-# 2. copy "ls" and "bash"
-cp $(which bash) $(which ls) ./bin
-
-# print shared object dependencies
-ldd ./bin/ls
-
-# 3. copy shared objects to our "lib"
-
-# selinux
-cp /lib/x86_64-linux-gnu/libselinux.so.1 ./lib
-# glibc
-cp /lib/x86_64-linux-gnu/libc.so.6 ./lib
-# pcre
-cp /lib/x86_64-linux-gnu/libpcre2-8.so.0 ./lib
-cp /lib64/ld-linux-x86-64.so.2 ./lib
-# above would need to be in lib64, so we just create that as a link.
-ln -s lib lib64 
-
-# What about linux-vdso.so.1? That is actually a kernel module loaded from memory.
-
-# Now do same thing for "bash". Only 1 extra object to be added
-ldd ./bin/ls
-cp /lib/x86_64-linux-gnu/libtinfo.so.6 ./lib
-
-# 4. Optional: run it in chroot, to test that it works.
-# sudo chroot ./test bash
-
-# 5. upload to Docker Registry using it's API's
-# Before following exports is needed:
-# 
-# export DOCKER_USERNAME=<docker-hub-username>
-# export DOCKER_PASSWORD=<docker-hub-password>
-#
-socker push <docker-hub-username>/<repository>:<tag>
-
-```
+## Docker Filesystem
+Root filesystems are part of an image and contains the executables needed together with all it's dependencies (userland). When an executable on this root filesystem runs in the [Docker Runtime](#docker-runtime), it's called a container. The filesystem used by Docker is a union filesystem called `overlay`, and it's just like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So, if same image are used by multiple containers, it's shared. 
 
 
-## Containers
-Docker containers are created by the [Docker Runtime](#docker-runtime). `containerd` manages the container lifecycle (start, stop etc). And `runc` is used as it's Container Runtime. A Container Runtime is basically how a process is isolated. And containers are just normal processes that holds namespaces. We could run an executable inside an image filesystem that holds a couple of namespaces without using Docker. And instead use `socker run`, which does following:
-
-* `unshare` creates the namespaces uts, mount, pid and ipc. And runs `socker init` __inside the namespaces created__. The `--fork` flag is also given, otherwise no new other processes could be created in the namespace. 
-
-> Note that `socker init` should never run outside namespace!  
-
-`socker init`
-* Directory above the root filesystem is mounted to itself. 
-* oldroot directory is created, which is needed by `pivot_root`.
-* `pivot_root` is used to change root to new root filesystem.
-* `proc` filesystem is mounted to `/proc`.
-* `sys` filesystem is mounted to `/sys`.
-* `dev` filesystem is mounted to `/dev`.
-* oldroot is unmounted and removed.
-* hostname is changed to image name.
-* The bash process is __replaced__ with the intended process, which is part of the new root filesystem. This is needed because the process started need to be PID 1. 
-
-When a namespace is created, normally the current namespace context is copied. So for example `uts` still has it's hosts hostname. But if it's changed within the namespace, it's isolated from host. Same thing with `mnt` namespace, but it will be reset because `/proc` is mounted to new root filesystem.  
-
-To run sh inside alpine image, as a container, we could do like this:
-```bash
-
-socker run library/alpine:latest sh
-```
-
-## Other uses of Docker Images
-Docker Image root filesystems can also be used in other ways. Because when we do `socker pull` it's separated from Docker and it's image concept, and it could be used for whatever purpose. 
-
-### chroot
-We could download the image without Docker (using `socker pull`) and chroot into the extracted root filesystem. This would only isolate filesystem though, so it doesn't qualify as a container. It's convenient though, for testing and exploring an image.
-
-Ex. Use image root filesystem with chroot.
-
-``` bash
-
-# note: in the main Docker Registry, all official images are part of the "library" "user".
-./chroot library/alpine:latest sh
-
-```
-
-### WSL2
-We could use the image root filesystem in WSL2, importing the filesystem as a tarball in WSL2 will create a new WSL2 distribution. 
-
-> WSL2 actually has a lot common with Docker, each distribution runs under same kernel, and the kernel runs in a light-weight Hyper-V VM, so all distributions share host (kernel). Meaning that a WSL2 distribution and Docker Containers are conceptually same thing. But WSL2 distributions use ext4 filesystem and are initialized differently. And while Docker Containers basically runs one main process, WSL2 runs a normal init like System V or SystemD. And thus behave more like a normal Linux distribution.
-
-Docker Desktop for Windows can be used with WSL2, which will create two distributions called docker-desktop & docker-desktop-data. The one where Docker Runtime runs is docker-desktop.
-
-We could use any Docker image in WSL2 by doing following:
-
-Ex. Use image with WSL2
-
-``` powershell
-# First create some folders in Windows
-$Path = c:\WSLDistros\alpine
-New-Item -ItemType Directory -Path $Path
-
-```
-And copy tarball to that folder  
-```bash
-# Linux
-
-# download
-socker pull library/alpine:latest
-
-# pack
-tar -czvf alpine.tar.gz -C ~/.socker/library/alpine/latest .
-
-# copy
-cp alpine.tar.gz /mnt/c/WSLDistros/
-```
-And import it into WSL2.
-``` powershell
-# Windows again
-
-wsl.exe --import "alpine" C:\WSLDistros\alpine\ C:\WSLDistros\alpine.tar.gz
-```
+## Docker Image
+Docker images are basically a manifest file which contains a list of "layers" bundled together with it's runtime configuration. Each layer is built upon previous layers, but when using it it appears as flattened. Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem. The manifest is used by Docker to create the `overlay` filesystem. And the runtime configuration file hold information about what namespaces to use, which executable to run as default, capabilities etc. Which is later used by the [Docker Runtime](#docker-runtime).
