@@ -1,7 +1,7 @@
 # Docker Internals
 Docker is a way to isolate a process from the rest of system using kernel features such as [namespaces](#namespaces), [cgroups](#cgroups), [capabilities](#capabilities) and [pivot_root](#pivot_root). When these features are used in conjunction to create an isolated environment, it's called a container. 
 
-When a container is spawn using [Docker Engine](#docker-engine), `docker client` connects to `docker daemon` wich pulls a [Docker Image](#docker-image) and connects container to network using [Docker Networking](#docker-networking). The image is added to [Docker Filesystem](#docker-filesystem). The `runtime configuration` in the image is used by the [Docker Runtime](#docker-runtime) to create the process, the filesystem and isolates it from the host.  
+When a container is spawn using [Docker Engine](#docker-engine), `docker client` connects to `docker daemon` wich pulls a [Docker Image](#docker-image) and connects container to network using [Docker Networking](#docker-networking). The image is added to [Docker Filesystem](#docker-filesystem). The `image configuration` in the image is used by the [Docker Runtime](#docker-runtime) to create the process and the filesystem, and isolates it from the host.  
 
 
 ## namespaces
@@ -184,7 +184,7 @@ Doing that would make the root `/` point to the filesystem inside `$fs_folder`.
 Docker Engine runs a daemon (service) called `dockerd` which is used by the Docker Client executable `docker`. `Dockerd` handles everything from creating networks to container management, but the actual containers run in another service called `containerd`. Normally the client connects to `dockerd` using the Docker UNIX socket file descriptor `/var/run/docker.sock`. When a container is started, an executable path within image is provided from client. And `containerd` uses a [Docker Runtime](#docker-runtime) called `runc` to isolate the process using namespaces, mount `/dev` & `/sys` filesystems, change root of filesystem using `pivot_root` and so forth. For example, running `docker run -it nginx bash` will connect to `dockerd`, which will connect to `containerd` and send command to run `bash` in `nginx:latest` image filesystem. `Containerd` will use `runc` to execute bash. And because of `-it` flags, a shared `TTY` device will be created by `containerd` that has `STDIN`, `STDOUT` & `STDERR` from bash connected to it. And it's `TTY` will be redirected by `containerd` to `docker` client, basically as a reverse shell.
 
 ## Docker Runtime
-Docker containers are created by the Docker Runtime `runc`. And a container are simply an isolated environment where processes can run. So `runc` is basically a way to initialize a process with all it's [namespaces](#namespaces), [capabilities](#capabilities), [cgroups](#cgroups) and to [pivot_root](#pivot_root). `runc` need a filesystem and a `runtime configuration` in order to create a container. Or more correctly, `containerd` translates information from `OCI image apecification` to `OCI runtime specification` and provides that to `runc`. So, we could create a base `OCI specification` using `runc spec` that we could manually edit in similar way as `containerd`, and use `runc` to start up a container:
+Docker containers are created by the Docker Runtime `runc`. And a container are simply an isolated environment where processes can run. So `runc` is basically a way to initialize a process with all it's [namespaces](#namespaces), [capabilities](#capabilities), [cgroups](#cgroups) and to [pivot_root](#pivot_root). `runc` need a filesystem and a `runtime configuration` in order to create a container. Or more correctly, `containerd` translates information from `OCI Image Manifest Specification` to `OCI runtime specification` and provides that to `runc`. So, we could create a base `OCI runtime specification` using `runc spec` that we could manually edit in similar way as `containerd`, and use `runc` to start up a container:
 
 ```bash
 docker run --name ubuntu ubuntu
@@ -313,7 +313,7 @@ rmdir /mnt/testing/
 
 
 ## Docker Image
-Docker images implements the `OCI Image Manifest Specification` which basically is a manifest file that contains a list of `layers` bundled together with it's `image configuration` file. Each layer is built upon previous layers and it fits together perfectly with the [Docker Filesystem](#docker-filesystem) "OverlayFS". The image layers are usually located under `/var/lib/docker/overlay2/` and ech layer are represented as a folder.
+Docker images implements the `OCI Image Manifest Specification` which basically is a manifest file that contains a list of `layers` bundled together with it's `image configuration` file. Each layer is built upon previous layers and it fits together perfectly with the default [Docker Filesystem](#docker-filesystem) called "OverlayFS". The image layers are usually located under `/var/lib/docker/overlay2/` and ech layer are represented as a folder.
 
 > Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem.
 
@@ -330,7 +330,7 @@ docker image inspect nginx | jq
 
 
 ## Docker Networking
-> Note, if you're using Docker Desktop and WSL2, do following: `docker run -it --privileged --pid=host --rm ubuntu nsenter -t 1 -n bash`. Also, following packages are needed: `apt update; apt -y install iproute2 tcpdump iptables bridge-utils` 
+> Note, if you're using Docker Desktop and WSL2, use following container when exploring networking: `docker run -it --privileged --pid=host --rm ubuntu nsenter -t 1 -n bash`. Also, following packages are needed: `apt update; apt -y install iproute2 tcpdump iptables bridge-utils` 
 
 [Docker Engine](#docker-engine) is responsible for the setup of networks. And Docker has four built-in network drivers:
 
