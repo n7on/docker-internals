@@ -1,5 +1,5 @@
 # Docker Internals
-Docker is a way to isolate a process from the rest of system using kernel features such as [namespaces](#namespaces), [cgroups](#cgroups), [capabilities](#capabilities) and [pivot_root](#pivot_root). When these features are used in conjunction to create an isolated environment, it's called a container. When a new container is created using [Docker Engine](#docker-engine) a [Docker Image](#docker-image) need to be provided. The root filesystem in the image is added to [Docker Filesystem](#docker-filesystem). And the runtime configuration in the image is used by the [Docker Runtime](#docker-runtime) to create the process inside the container.  
+Docker is a way to isolate a process from the rest of system using kernel features such as [namespaces](#namespaces), [cgroups](#cgroups), [capabilities](#capabilities) and [pivot_root](#pivot_root). When these features are used in conjunction to create an isolated environment, it's called a container. When a container is spawn using [Docker Engine](#docker-engine), `docker client` connects to `docker daemon` wich pulls a [Docker Image](#docker-image). The image is added to [Docker Filesystem](#docker-filesystem) and container filesystem is created. The `runtime configuration` in the image is used by the [Docker Runtime](#docker-runtime) to create the process inside the container.  
 
 
 ## namespaces
@@ -67,7 +67,7 @@ lsns -p $$
 > 4026536218 uts         2 74238 root bash
 ```
 
-Another way a process namespaces could be viewed is by exploring the `/proc` filesystem. Which are a pseudo filesystem provided by the kernel. For each process we have `/proc/<pid>/ns/<namespace>`, so we could list the namespaces of `init` (PID 1) using filesystem as well.
+Another way a process namespaces could be viewed is by exploring the `/proc` filesystem. Which are a `pseudo filesystem` provided by the kernel. For each process we have `/proc/<pid>/ns/<namespace>`, so we could list the namespaces of `init` (PID 1) using filesystem as well.
 
 ```bash
 sudo ls -l /proc/1/ns
@@ -90,7 +90,7 @@ sudo readlink /proc/1/ns/mnt
 
 
 ## cgroups
-Control Group (also called resource controllers), is a way to manage resources like memory, disk, CPU, network etc. So that resource limits can be added to a container, and usage can be extracted. Cgroup is structured in multiple separate hierarchies under `/sys/fs/cgroup`. Which contains each of it's subsystems. And a `cgroup` is isolated from host using it's `cgroup` namespace together with `cgroups` mounted from the host. When a Docker container is started, Docker Runtime will create a new child group named `docker/<container id>` on the host under each subsystem. The host `cgroup` namespace will be copied, and if a limit is added it will be changed in the namespace. Following are some of the cgroup subsystem:
+Control Group (also called resource controllers), is a way to manage resources like memory, disk, CPU, network etc. So that resource limits can be added to a container, and usage can be extracted. `Cgroup` is structured in multiple separate hierarchies under `/sys/fs/cgroup`. Which contains each of it's subsystems. And a `cgroup` is isolated from host using it's `cgroup` namespace together with `cgroups` mounted from the host. When a container is started, [Docker Engine](#docker-engine) will create a new child group named `docker/<container id>` on the host under each subsystem. The host `cgroup` namespace will be copied, and if a limit is added it will be changed in the namespace. Following are some of the cgroup subsystem:
 
 > Note that the `/sys` filesystem is just like `/dev` a pseudo filesystem provided by the kernel.
 
@@ -150,12 +150,12 @@ getpcaps $pid
 >1426: cap_chown,cap_dac_override,cap_fowner,cap_fsetid,cap_kill,cap_setgid,cap_setuid,cap_setpcap,cap_net_bind_service,cap_net_raw,>cap_sys_chroot,cap_mknod,cap_audit_write,cap_setfcap=ep
 
 ```
-So for instance, it has `cap_sys_chroot` which is needed by `pivot_root` to change root filesystem. It also has `cap_mknod` which is needed by some images to create special files in `/dev`. `cap_setuid` and `cap_setgid` is needed to map user and groups. In fact, most of it's capabilities are actually needed in order to initialize the container.
+So for instance, it has `cap_sys_chroot` which is needed by `pivot_root` to change root filesystem. It also has `cap_mknod` which is needed by some images to create special files in `/dev`. `cap_setuid` and `cap_setgid` is needed to map user and groups. In fact, many of it's capabilities are actually needed by [Docker Runtime](#docker-runtime) in order to initialize the container.
 
 
 ## pivot_root 
 
-Used by Docker to change root filesystem to image filesystem. This is done in the process which starts up the container (PID 1). Following is an example how this is done:
+Used by [Docker Runtime](#docker-runtime) to change root filesystem to image filesystem. This is done in the process which starts up the container (PID 1) during container initialization. Following is an example how this is done:
 
 ```bash
 # needed by pivot_root
@@ -179,10 +179,10 @@ rmdir oldroot
 Doing that would make the root `/` point to the filesystem inside `$fs_folder`.
 
 ## Docker Engine
-Docker Engine runs a daemon called containerd, which will provide a service that can be used for managing Docker containers. Such as starting, stopping or pulling images. This service is used by the Docker Client executable `docker`. Normally the client connects to containerd using the Docker UNIX socket file descriptor `/var/run/docker.sock`. When a container is started, an executable path within image is provided from client. And Docker uses a Docker Runtime called `runc` to isolate the process using namespaces, mount `/dev` & `/sys` filesystems, change root of filesystem using `pivot_root` and so forth. For example, `docker run -it nginx bash` will connect to containerd and send command to run `bash` in `nginx:latest` image filesystem. Containerd will use `runc` to execute bash. And because of `-it` flags, a shared `TTY` device will be created in host that has `STDIN`, `STDOUT` & `STDERR` from bash connected to it. And it's `TTY` will be redirected by `containerd` to `docker` client, basically as a reverse shell.
+Docker Engine runs a daemon (service) called `dockerd` which is used by the Docker Client executable `docker`. `Dockerd` handles everything from creating networks to container management, but the actual containers run in another service called `containerd`. Normally the client connects to `dockerd` using the Docker UNIX socket file descriptor `/var/run/docker.sock`. When a container is started, an executable path within image is provided from client. And `containerd` uses a [Docker Runtime](#docker-runtime) called `runc` to isolate the process using namespaces, mount `/dev` & `/sys` filesystems, change root of filesystem using `pivot_root` and so forth. For example, running `docker run -it nginx bash` will connect to `dockerd`, which will connect to `containerd` and send command to run `bash` in `nginx:latest` image filesystem. `Containerd` will use `runc` to execute bash. And because of `-it` flags, a shared `TTY` device will be created by `containerd` that has `STDIN`, `STDOUT` & `STDERR` from bash connected to it. And it's `TTY` will be redirected by `containerd` to `docker` client, basically as a reverse shell.
 
 ## Docker Runtime
-Docker containers are created by the Docker Runtime `runc`. And a container are simply an isolated environment where processes can run. `runc` need a filesystem and a `runtime configuration` in order to create a container. Or more correctly, [Docker Engine](#docker-engine) translates information from `OCI image apecification` to `OCI runtime specification` and provides that to`runc`. And we're missing that logic, but we could create a base `OCI specification` using `runc spec` that we could later manually edit:
+Docker containers are created by the Docker Runtime `runc`. And a container are simply an isolated environment where processes can run. So `runc` is basically a way to initialize a process with all it's [namespaces](#namespaces), [capabilities](#capabilities), [cgroups](#cgroups) and to [pivot_root](#pivot_root). `runc` need a filesystem and a `runtime configuration` in order to create a container. Or more correctly, `containerd` translates information from `OCI image apecification` to `OCI runtime specification` and provides that to `runc`. So, we could create a base `OCI specification` using `runc spec` that we could manually edit in similar way as `containerd`, and use `runc` to start up a container:
 
 ```bash
 docker run --name ubuntu ubuntu
@@ -206,7 +206,7 @@ runc run containerid
 
 ```
 
-The first process created inside a container is always `PID 1`. And in a Linux system it's usually `systemd` or `SysV init`. So a container doesn't do any bootstrap or management of user processes. All this is handled by [Docker Engine](#docker-engine) instead. And when `PID 1` is terminated, so is the container.
+> Note, that first process created inside a container is always `PID 1`. And in a Linux system it's usually `systemd` or `SysV init`. So a container doesn't do any bootstrap or management of user processes. All this is handled by [Docker Engine](#docker-engine) instead. And when `PID 1` is terminated, so is the container.
 
 
 ## Docker Filesystem
@@ -215,3 +215,8 @@ Root filesystems are part of an image and contains the executables needed togeth
 
 ## Docker Image
 Docker images implements the `OCI image apecification` which basically is a manifest file that contains a list of `layers` bundled together with it's `runtime configuration` file. Each layer is built upon previous layers, but when using it it appears as flattened. Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem. The manifest is used by Docker to create the `overlay` filesystem. And the runtime configuration file hold information about what namespaces to use, which executable to run as default, capabilities etc. Which is later used by the [Docker Runtime](#docker-runtime).
+
+
+## Docker Networking
+# TODO
+[Docker Engine](#docker-engine) is responsible for the setup of networks.
