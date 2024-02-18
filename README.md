@@ -1,5 +1,7 @@
 # Docker Internals
-Docker is a way to isolate a process from the rest of system using kernel features such as [namespaces](#namespaces), [cgroups](#cgroups), [capabilities](#capabilities) and [pivot_root](#pivot_root). When these features are used in conjunction to create an isolated environment, it's called a container. When a container is spawn using [Docker Engine](#docker-engine), `docker client` connects to `docker daemon` wich pulls a [Docker Image](#docker-image). The image is added to [Docker Filesystem](#docker-filesystem) and container filesystem is created. The `runtime configuration` in the image is used by the [Docker Runtime](#docker-runtime) to create the process inside the container.  
+Docker is a way to isolate a process from the rest of system using kernel features such as [namespaces](#namespaces), [cgroups](#cgroups), [capabilities](#capabilities) and [pivot_root](#pivot_root). When these features are used in conjunction to create an isolated environment, it's called a container. 
+
+When a container is spawn using [Docker Engine](#docker-engine), `docker client` connects to `docker daemon` wich pulls a [Docker Image](#docker-image) and connects container to network using [Docker Networking](#docker-networking). The image is added to [Docker Filesystem](#docker-filesystem). The `runtime configuration` in the image is used by the [Docker Runtime](#docker-runtime) to create the process, the filesystem and isolates it from the host.  
 
 
 ## namespaces
@@ -19,17 +21,17 @@ Each namespace is held by at least 1 process. And a process can only belong to o
 # list the init process namespaces
 sudo lsns -p 1
 
-> 4026531834 time       70   1 root /sbin/init
-> 4026531835 cgroup     70   1 root /sbin/init
-> 4026531837 user       70   1 root /sbin/init
-> 4026531840 net        70   1 root /sbin/init
-> 4026532266 ipc        70   1 root /sbin/init
-> 4026532277 mnt        67   1 root /sbin/init
-> 4026532278 uts        68   1 root /sbin/init
-> 4026532279 pid        70   1 root /sbin/init
+> 4026531834 time       70   1 root /init
+> 4026531835 cgroup     70   1 root /init
+> 4026531837 user       70   1 root /init
+> 4026531840 net        70   1 root /init
+> 4026532266 ipc        70   1 root /init
+> 4026532277 mnt        67   1 root /init
+> 4026532278 uts        68   1 root /init
+> 4026532279 pid        70   1 root /init
 
 ```
-And all other processes will inherit namespaces from it's parent process. So if we do same thing for the current shell process, we get exactly same namespace id's as with `init`: 
+All other processes will inherit namespaces from it's parent process. So if we do same thing for the current shell process, we get exactly same namespace id's as with `init`: 
 
 ```bash
 lsns -p $$ | awk '{print $1,$2}'
@@ -210,13 +212,167 @@ runc run containerid
 
 
 ## Docker Filesystem
-Root filesystems are part of an image and contains the executables needed together with all it's dependencies (userland). When an executable on this root filesystem runs in the [Docker Runtime](#docker-runtime), it's called a container. The filesystem used by Docker is a union filesystem called `overlay`, and it's just like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So, if same image are used by multiple containers, it's shared. 
+Root filesystems are part of an image and contains the executables needed together with all it's dependencies (userland). When an executable on this root filesystem runs in the [Docker Runtime](#docker-runtime), it's called a container. The default filesystem used by Docker is a union filesystem called `OverlayFS`, and it's just like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So, if same image are used by multiple containers, it's shared. 
+
+`OverlayFS` filesystem is part if the kernel. And it concists of following pieces:
+
+* `LowerDir` - readonly layers.
+* `UpperDir` - read/write layer.
+* `MergedDir`- all layers merged.
+* `WorkDir`  - used by `OverlayFS` to create `MergedDir`
+
+> Note, if you're using Docker Desktop and WSL2, do following: `docker run -it --privileged --rm --pid=host debian nsenter -t 1 -m -u -i sh`. 
+
+So we could inspect layers in an image and compare it to layers in a container. 
+``` bash
+
+# first, pull nginx image
+docker pull nginx:latest
+
+# and inspect it's layers
+docker image inspect nginx | jq '.[0].GraphDriver.Data'
+>{
+>  "LowerDir": "/var/lib/docker/overlay2/9f8aa5926b47a7a07ba55cd2ce938ae1cfce32d08557bcd4a23086ef76560bef/diff:
+>               /var/lib/docker/overlay2/49569d337c727a9d93a15b910c2a0fb5cb05996954a50a546002ca46231df3fd/diff:
+>               /var/lib/docker/overlay2/8678c30b35e2393241ecb5288f0dbaab45e9e81213078793c05b62bf21ebfe97/diff:
+>               /var/lib/docker/overlay2/856de74b0828e7523134b53f45de181a81e317e5eed3c6992ecd85fd281d0072/diff:
+>               /var/lib/docker/overlay2/0c5253794034518627d1bce63c067171ef11c16767d5f5a77aa539a1b29d8f8f/diff:
+>               /var/lib/docker/overlay2/a228042c51ce74cfbbae479fe7a7ceed26a45ba4a7dee392df059400202e92e6/diff",
+>  "MergedDir":"/var/lib/docker/overlay2/5d6cb52f37dfbc060f91c708b38661558c22cbc522e232d087ef9009c9127f66/merged",
+>  "UpperDir": "/var/lib/docker/overlay2/5d6cb52f37dfbc060f91c708b38661558c22cbc522e232d087ef9009c9127f66/diff",
+>  "WorkDir":  "/var/lib/docker/overlay2/5d6cb52f37dfbc060f91c708b38661558c22cbc522e232d087ef9009c9127f66/work"
+>}
+
+# create nginx container
+docker run --name nginx -d nginx:latest
+
+# and inspect container layers
+docker container inspect nginx | jq '.[0].GraphDriver.Data'
+
+>{
+>  "LowerDir": "/var/lib/docker/overlay2/ca852f913a6c93a9dd97a1219804e73c4e55d3639ab5198a97ac541aed9a2e87-init/diff:
+>               /var/lib/docker/overlay2/5d6cb52f37dfbc060f91c708b38661558c22cbc522e232d087ef9009c9127f66/diff:
+>               /var/lib/docker/overlay2/9f8aa5926b47a7a07ba55cd2ce938ae1cfce32d08557bcd4a23086ef76560bef/diff:
+>               /var/lib/docker/overlay2/49569d337c727a9d93a15b910c2a0fb5cb05996954a50a546002ca46231df3fd/diff:
+>               /var/lib/docker/overlay2/8678c30b35e2393241ecb5288f0dbaab45e9e81213078793c05b62bf21ebfe97/diff:
+>               /var/lib/docker/overlay2/856de74b0828e7523134b53f45de181a81e317e5eed3c6992ecd85fd281d0072/diff:
+>               /var/lib/docker/overlay2/0c5253794034518627d1bce63c067171ef11c16767d5f5a77aa539a1b29d8f8f/diff:
+>               /var/lib/docker/overlay2/a228042c51ce74cfbbae479fe7a7ceed26a45ba4a7dee392df059400202e92e6/diff",
+>  "MergedDir": "/var/lib/docker/overlay2/ca852f913a6c93a9dd97a1219804e73c4e55d3639ab5198a97ac541aed9a2e87/merged",
+>  "UpperDir":  "/var/lib/docker/overlay2/ca852f913a6c93a9dd97a1219804e73c4e55d3639ab5198a97ac541aed9a2e87/diff",
+>  "WorkDir":   "/var/lib/docker/overlay2/ca852f913a6c93a9dd97a1219804e73c4e55d3639ab5198a97ac541aed9a2e87/work"
+>}
+```
+Ok, so if we look at LowerDir in container we see that it's same as with image, except it has 2 more layers on top of it with:
+
+* `ca852f913a6c93a9dd97a1219804e73c4e55d3639ab5198a97ac541aed9a2e87-init` on top 
+* `5d6cb52f37dfbc060f91c708b38661558c22cbc522e232d087ef9009c9127f66` below. Which is same as UpperDir on image.
+
+And we can also see that:
+`ca852f913a6c93a9dd97a1219804e73c4e55d3639ab5198a97ac541aed9a2e87` (without -init) is UpperDir in container.
+
+Which all makes sense given that image is used in container, but readonly. And The `UpperDir` in container is where all changes are made.
+
+So how does [Docker Runtime](#docker-runtime) make this behave like a normal filesystem? It mounts it all using the `overlay` mount type! So we could do same thing as [Docker Runtime](#docker-runtime), but mount it somewhere else:
+
+
+```bash
+
+mkdir -p /mnt/testing
+
+mount -t overlay -o lowerdir=/var/lib/docker/overlay2/ca852f913a6c93a9dd97a1219804e73c4e55d3639ab5198a97ac541aed9a2e87-init/diff:\
+/var/lib/docker/overlay2/5d6cb52f37dfbc060f91c708b38661558c22cbc522e232d087ef9009c9127f66/diff:\
+/var/lib/docker/overlay2/9f8aa5926b47a7a07ba55cd2ce938ae1cfce32d08557bcd4a23086ef76560bef/diff:\
+/var/lib/docker/overlay2/49569d337c727a9d93a15b910c2a0fb5cb05996954a50a546002ca46231df3fd/diff:\
+/var/lib/docker/overlay2/8678c30b35e2393241ecb5288f0dbaab45e9e81213078793c05b62bf21ebfe97/diff:\
+/var/lib/docker/overlay2/856de74b0828e7523134b53f45de181a81e317e5eed3c6992ecd85fd281d0072/diff:\
+/var/lib/docker/overlay2/0c5253794034518627d1bce63c067171ef11c16767d5f5a77aa539a1b29d8f8f/diff:\
+/var/lib/docker/overlay2/a228042c51ce74cfbbae479fe7a7ceed26a45ba4a7dee392df059400202e92e6/diff,\
+upperdir=/var/lib/docker/overlay2/ca852f913a6c93a9dd97a1219804e73c4e55d3639ab5198a97ac541aed9a2e87/diff,\
+workdir=/var/lib/docker/overlay2/ca852f913a6c93a9dd97a1219804e73c4e55d3639ab5198a97ac541aed9a2e87/work \
+overlay /mnt/testing
+
+```
+
+And this is exact same filesystem that the nginx container uses. Which we can confirm:
+
+```bash
+
+echo "Hello!" > /mnt/testing/hello
+
+docker exec -it nginx bash
+
+# in container
+cat /hello
+> Hello!
+
+# cleanup in host
+umount /mnt/testing
+rmdir /mnt/testing/
+```
 
 
 ## Docker Image
-Docker images implements the `OCI image apecification` which basically is a manifest file that contains a list of `layers` bundled together with it's `runtime configuration` file. Each layer is built upon previous layers, but when using it it appears as flattened. Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem. The manifest is used by Docker to create the `overlay` filesystem. And the runtime configuration file hold information about what namespaces to use, which executable to run as default, capabilities etc. Which is later used by the [Docker Runtime](#docker-runtime).
+Docker images implements the `OCI Image Manifest Specification` which basically is a manifest file that contains a list of `layers` bundled together with it's `image configuration` file. Each layer is built upon previous layers and it fits together perfectly with the [Docker Filesystem](#docker-filesystem) "OverlayFS". The image layers are usually located under `/var/lib/docker/overlay2/` and ech layer are represented as a folder.
+
+> Layers could be thought of as tarballs, if these tarballs are extracted in correct order to disk, you'll get the image root filesystem.
+
+The `image configuration` hold information about exposed ports, environment variables, which executable to run as default etc. Which is later used by the [Docker Engine](#docker-engine) to create the `OCI Runtime Specification` used by the [Docker Runtime](#docker-runtime).
+
+To view where all layers in an image are located, and all other image related information, we can do following:
+
+```bash
+# inspect nginx image
+docker image inspect nginx | jq
+
+# layer information are found under `GraphDriver.Data`
+```
 
 
 ## Docker Networking
-# TODO
-[Docker Engine](#docker-engine) is responsible for the setup of networks.
+> Note, if you're using Docker Desktop and WSL2, do following: `docker run -it --privileged --pid=host --rm ubuntu nsenter -t 1 -n bash`. Also, following packages are needed: `apt update; apt -y install iproute2 tcpdump iptables bridge-utils` 
+
+[Docker Engine](#docker-engine) is responsible for the setup of networks. And Docker has four built-in network drivers:
+
+* Bridge - The default network. With connectivity to an Docker bridge interface.
+* Host - Allows access to same interfaces as the host.
+* Macvlan - Allows for access to an interface on the host.
+* Overlay - Allows for networks between different host running Docker, usually Docker Swarm clusters.
+
+The default network bridge is `docker0`, and we can view some more information about it:
+
+```bash
+# first start a container
+docker run --name nginx -p 80:80 -d nginx
+
+
+brctl show docker0
+
+>bridge name     bridge id               STP enabled     interfaces
+>docker0         8000.02429f7dbd2f       no              veth0c35011
+
+# and we see that it have one veth interfaces are attached to it.
+
+# we can also see that this interface exist on the host
+ip link show
+
+>20: veth0c35011@if19: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue master docker0 state UP mode DEFAULT group default
+>    link/ether ce:d7:73:6c:90:31 brd ff:ff:ff:ff:ff:ff link-netnsid 1
+
+# and if we run iptables to see it's rules
+
+iptables -L
+
+# we'll see that it has this rule in the DOCKER chain
+
+>Chain DOCKER (1 references)
+>target     prot opt source               destination
+>ACCEPT     tcp  --  anywhere             172.17.0.2           tcp dpt:http
+
+# we can double check that this is in fact the container ip
+docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' nginx
+
+>172.17.0.2
+
+```
+So what does this tell us? Well, `containerd` runs on the host and we can from this deduce that `containerd` creates the bridge `docker0`, and when we run a container, `containerd` creates a `veth` interface that belongs to the container network namespace. And the network is opened up to container ip using `iptable` rules in the `DOCKER` chain.
