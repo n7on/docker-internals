@@ -212,7 +212,7 @@ runc run containerid
 
 
 ## Docker Filesystem
-Root filesystems are part of an image and contains the executables needed together with all it's dependencies (userland). When an executable on this root filesystem runs in the [Docker Runtime](#docker-runtime), it's called a container. The default filesystem used by Docker is a union filesystem called `OverlayFS`, and it's just like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So, if same image are used by multiple containers, it's shared. 
+Root filesystems are part of an image and contains the executables needed together with all it's dependencies (userland). When an executable on this root filesystem runs in the [Docker Runtime](#docker-runtime), it's called a container. The default filesystem used by Docker is a union filesystem called `OverlayFS`, and it's just like the image format based upon layers. The top layer is where the container can make changes, and the layers below belong to the image which is immutable. So, if same image are used by multiple containers they all share the layers that belongs to the image. Both container and image layers are stored under `/var/lib/docker/overlay2`.
 
 `OverlayFS` filesystem is part if the kernel. And it concists of following pieces:
 
@@ -221,7 +221,7 @@ Root filesystems are part of an image and contains the executables needed togeth
 * `MergedDir`- all layers merged.
 * `WorkDir`  - used by `OverlayFS` to create `MergedDir`
 
-> Note, if you're using Docker Desktop and WSL2, do following: `docker run -it --privileged --rm --pid=host debian nsenter -t 1 -m -u -i sh`. 
+> Note, if you're using Docker Desktop and WSL2, use following container to explore Docker Filesystem : `docker run -it --privileged --rm --pid=host debian nsenter -t 1 -m -u -i sh`. 
 
 So we could inspect layers in an image and compare it to layers in a container. 
 ``` bash
@@ -330,7 +330,7 @@ docker image inspect nginx | jq
 
 
 ## Docker Networking
-> Note, if you're using Docker Desktop and WSL2, use following container when exploring networking: `docker run -it --privileged --pid=host --rm ubuntu nsenter -t 1 -n bash`. Also, following packages are needed: `apt update; apt -y install iproute2 tcpdump iptables bridge-utils` 
+> Note, if you're using Docker Desktop and WSL2, use following container to explore Docker Networking: `docker run -it --privileged --pid=host --rm ubuntu nsenter -t 1 -n bash`. Also, following packages are needed: `apt update; apt -y install iproute2 tcpdump iptables bridge-utils` 
 
 [Docker Engine](#docker-engine) is responsible for the setup of networks. And Docker has four built-in network drivers:
 
